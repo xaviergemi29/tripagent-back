@@ -1,0 +1,2 @@
+ALTER TABLE "magic_tokens" ADD COLUMN "booking_id" uuid;--> statement-breakpoint
+ALTER TABLE "magic_tokens" ADD CONSTRAINT "magic_tokens_booking_id_bookings_id_fk" FOREIGN KEY ("booking_id") REFERENCES "public"."bookings"("id") ON DELETE cascade ON UPDATE no action;

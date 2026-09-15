@@ -1,0 +1,2 @@
+DROP INDEX "idx_unique_active_tour_traveler";--> statement-breakpoint
+CREATE UNIQUE INDEX "idx_unique_active_tour_traveler" ON "bookings" USING btree ("tour_id","traveler_id") WHERE "bookings"."booking_status" <> 'CANCELLED';
