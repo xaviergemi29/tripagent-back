@@ -29,9 +29,9 @@ const buildApp = async () => {
   await app.register(fastifyJwt, {
     secret: process.env.JWT_SECRET || "otro-secreto-jwt",
     cookie: {
-      cookieName: 'token', // Le dice a @fastify/jwt que busque el token aquí
-      signed: false // Cámbialo a true si decides firmar las cookies en el futuro
-    }
+      cookieName: "token", // Le dice a @fastify/jwt que busque el token aquí
+      signed: false, // Cámbialo a true si decides firmar las cookies en el futuro
+    },
   });
 
   app.decorate("authenticate", async function (request, reply) {
@@ -58,17 +58,17 @@ const buildApp = async () => {
   });
 
   // 3. REGISTRO DE MÓDULOS (Rutas)
-  // El código original tenía un app.post("/api/travelers") huérfano. 
+  // El código original tenía un app.post("/api/travelers") huérfano.
   // Lo hemos removido para delegar la responsabilidad 100% a sus respectivos módulos.
   await app.register(travelerRoutes, { prefix: "/api/travelers" });
   await app.register(tourRoutes, { prefix: "/api/tours" });
-  await app.register(bookingRoutes, { prefix: "/api/bookings" })
-  await app.register(agencyRoute, { prefix: "/api/agencies" })
-  await app.register(dashboardRoutes, { prefix: "/api/dashboards" })
-  await app.register(magicTokensRoutes, { prefix: "/api/magic-tokens" })
-  await app.register(bookingPassengersRoutes, { prefix: "/api/bookingPassengers" })
-  await app.register(paymentRoutes, { prefix: "/api/payments" })
-  await app.register(authRoutes, { prefix: "/api/auth" })
+  await app.register(bookingRoutes, { prefix: "/api/bookings" });
+  await app.register(agencyRoute, { prefix: "/api/agencies" });
+  await app.register(dashboardRoutes, { prefix: "/api/dashboards" });
+  await app.register(magicTokensRoutes, { prefix: "/api/magic-tokens" });
+  await app.register(bookingPassengersRoutes, { prefix: "/api/bookingPassengers" });
+  await app.register(paymentRoutes, { prefix: "/api/payments" });
+  await app.register(authRoutes, { prefix: "/api/auth" });
   return app;
 };
 

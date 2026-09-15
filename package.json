@@ -9,18 +9,25 @@
     "db:migrate": "node --import tsx src/db/migrate.ts",
     "db:push": "drizzle-kit push --config=drizzle.config.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^26.1.2",
     "drizzle-kit": "^0.31.10",
+    "eslint": "^10.10.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.6",
     "tsx": "^4.23.5",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "typescript-eslint": "^8.70.0"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",

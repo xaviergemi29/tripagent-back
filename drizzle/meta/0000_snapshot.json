@@ -221,10 +221,7 @@
     "public.transport_modality": {
       "name": "transport_modality",
       "schema": "public",
-      "values": [
-        "TRANSPORT_INCLUDED",
-        "INDEPENDENT_ACCESS"
-      ]
+      "values": ["TRANSPORT_INCLUDED", "INDEPENDENT_ACCESS"]
     }
   },
   "schemas": {},

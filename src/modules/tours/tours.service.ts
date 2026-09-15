@@ -9,16 +9,10 @@ export class TourService {
     const { limit, offset, search } = query;
 
     // 1. Construimos las condiciones de búsqueda por texto (si existe)
-    const searchCondition = search ? or(
-      ilike(tours.title, `%${search}%`),
-    ) : undefined
+    const searchCondition = search ? or(ilike(tours.title, `%${search}%`)) : undefined;
 
     // 2. Unificamos TODAS las condiciones de seguridad y filtrado en un solo 'and'
-    const whereClause = and(
-      eq(tours.agencyId, agencyId),
-      isNull(tours.deletedAt),
-      searchCondition
-    )
+    const whereClause = and(eq(tours.agencyId, agencyId), isNull(tours.deletedAt), searchCondition);
 
     // 3. Ejecución de la consulta de datos paginados
     const data = await db
@@ -60,42 +54,25 @@ export class TourService {
    * Obtiene un tour por su UUID.
    */
   static async findTourById(id: string, agencyId: string) {
-    return await db
-    .query
-    .tours
-    .findFirst({
-      where: and(
-        eq(tours.id, id),
-        eq(tours.agencyId, agencyId),
-        isNull(tours.deletedAt)
-      )
+    return await db.query.tours.findFirst({
+      where: and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)),
     });
   }
 
   /**
    * Actualiza parcialmente un tour existente.
    */
-static async updateTour(id: string, data: UpdateTourBody, agencyId: string) {
+  static async updateTour(id: string, data: UpdateTourBody, agencyId: string) {
     const [tourUpdated] = await db
       .update(tours)
       .set({ ...data, updatedAt: new Date().toISOString() })
-      .where(
-        and(
-          eq(tours.id, id),
-          eq(tours.agencyId, agencyId),
-          isNull(tours.deletedAt)
-        )
-      )
+      .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
       .returning();
     return tourUpdated;
   }
 
-
   static async deleteTour(id: string) {
-    const [tourDeleted] = await db
-      .delete(tours)
-      .where(eq(tours.id, id))
-      .returning();
+    const [tourDeleted] = await db.delete(tours).where(eq(tours.id, id)).returning();
 
     return tourDeleted;
   }
@@ -107,13 +84,7 @@ static async updateTour(id: string, data: UpdateTourBody, agencyId: string) {
     const [tourDeleted] = await db
       .update(tours)
       .set({ deletedAt: timestampNow })
-      .where(
-        and(
-          eq(tours.id, id),
-          eq(tours.agencyId, agencyId),
-          isNull(tours.deletedAt)
-        )
-      )
+      .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
       .returning();
 
     return tourDeleted;

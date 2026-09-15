@@ -14,7 +14,7 @@ if (!connectionString) {
 // Instancia de postgres.js con soporte SSL explícito para Neon
 const queryClient = postgres(connectionString, {
   ssl: "require", // Forzamos el TLS para instancias remotas en AWS
-  max: 10,        // Pool de conexiones adecuado para desarrollo
+  max: 10, // Pool de conexiones adecuado para desarrollo
 });
 
 export const db = drizzle(queryClient, { schema });

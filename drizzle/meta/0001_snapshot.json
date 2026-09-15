@@ -94,9 +94,7 @@
         "agencies_slug_unique": {
           "name": "agencies_slug_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "slug"
-          ]
+          "columns": ["slug"]
         }
       },
       "policies": {},
@@ -161,12 +159,8 @@
           "name": "booking_passengers_booking_id_bookings_id_fk",
           "tableFrom": "booking_passengers",
           "tableTo": "bookings",
-          "columnsFrom": [
-            "booking_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["booking_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -174,12 +168,8 @@
           "name": "booking_passengers_traveler_id_travelers_id_fk",
           "tableFrom": "booking_passengers",
           "tableTo": "travelers",
-          "columnsFrom": [
-            "traveler_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["traveler_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -310,12 +300,8 @@
           "name": "bookings_agency_id_agencies_id_fk",
           "tableFrom": "bookings",
           "tableTo": "agencies",
-          "columnsFrom": [
-            "agency_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["agency_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -323,12 +309,8 @@
           "name": "bookings_tour_id_tours_id_fk",
           "tableFrom": "bookings",
           "tableTo": "tours",
-          "columnsFrom": [
-            "tour_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tour_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -336,12 +318,8 @@
           "name": "bookings_traveler_id_travelers_id_fk",
           "tableFrom": "bookings",
           "tableTo": "travelers",
-          "columnsFrom": [
-            "traveler_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["traveler_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -414,12 +392,8 @@
           "name": "magic_tokens_agency_id_agencies_id_fk",
           "tableFrom": "magic_tokens",
           "tableTo": "agencies",
-          "columnsFrom": [
-            "agency_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["agency_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -427,12 +401,8 @@
           "name": "magic_tokens_tour_id_tours_id_fk",
           "tableFrom": "magic_tokens",
           "tableTo": "tours",
-          "columnsFrom": [
-            "tour_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tour_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -442,9 +412,7 @@
         "magic_tokens_token_unique": {
           "name": "magic_tokens_token_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token"
-          ]
+          "columns": ["token"]
         }
       },
       "policies": {},
@@ -604,12 +572,8 @@
           "name": "tours_agency_id_agencies_id_fk",
           "tableFrom": "tours",
           "tableTo": "agencies",
-          "columnsFrom": [
-            "agency_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["agency_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -736,12 +700,8 @@
           "name": "travelers_agency_id_agencies_id_fk",
           "tableFrom": "travelers",
           "tableTo": "agencies",
-          "columnsFrom": [
-            "agency_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["agency_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -757,48 +717,27 @@
     "public.booking_status": {
       "name": "booking_status",
       "schema": "public",
-      "values": [
-        "PENDING",
-        "CONFIRMED",
-        "CANCELLED",
-        "NO_SHOW"
-      ]
+      "values": ["PENDING", "CONFIRMED", "CANCELLED", "NO_SHOW"]
     },
     "public.passenger_type": {
       "name": "passenger_type",
       "schema": "public",
-      "values": [
-        "ADULT",
-        "CHILD"
-      ]
+      "values": ["ADULT", "CHILD"]
     },
     "public.payment_status": {
       "name": "payment_status",
       "schema": "public",
-      "values": [
-        "PENDING",
-        "PARTIAL",
-        "PAID",
-        "REFUNDED"
-      ]
+      "values": ["PENDING", "PARTIAL", "PAID", "REFUNDED"]
     },
     "public.subscription_status": {
       "name": "subscription_status",
       "schema": "public",
-      "values": [
-        "trialing",
-        "active",
-        "past_due",
-        "canceled"
-      ]
+      "values": ["trialing", "active", "past_due", "canceled"]
     },
     "public.transport_modality": {
       "name": "transport_modality",
       "schema": "public",
-      "values": [
-        "TRANSPORT_INCLUDED",
-        "INDEPENDENT_ACCESS"
-      ]
+      "values": ["TRANSPORT_INCLUDED", "INDEPENDENT_ACCESS"]
     }
   },
   "schemas": {},

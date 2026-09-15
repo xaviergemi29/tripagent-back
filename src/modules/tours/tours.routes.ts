@@ -1,30 +1,34 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { createTourBodySchema, getTourByIdParamsSchema, getToursQuerySchema, updateTourBodySchema } from "./tours.schema.js";
+import {
+  createTourBodySchema,
+  getTourByIdParamsSchema,
+  getToursQuerySchema,
+  updateTourBodySchema,
+} from "./tours.schema.js";
 import { TourService } from "./tours.service.js";
 import { AGENCY_ID } from "../../constants.js";
 
 export async function tourRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
-  // 1. GET 
+  // 1. GET
   server.get(
     "/",
     {
       schema: {
-        querystring: getToursQuerySchema
+        querystring: getToursQuerySchema,
       },
     },
     async (request, reply) => {
       try {
-        const tours = await TourService.findTours(request.query, AGENCY_ID)
+        const tours = await TourService.findTours(request.query, AGENCY_ID);
         return reply.status(200).send(tours);
       } catch (error) {
         app.log.error(error, "Error al consultar tours");
         return reply.status(500).send({ error: "Error interno del servidor" });
-
       }
-    }
+    },
   );
 
   // 1. POST / (Crear)
@@ -44,7 +48,7 @@ export async function tourRoutes(app: FastifyInstance) {
 
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
-    }
+    },
   );
 
   // 2. GET /:id (Consultar por UUID)
@@ -70,7 +74,7 @@ export async function tourRoutes(app: FastifyInstance) {
         app.log.error(error, "Error al consultar tour por ID");
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
-    }
+    },
   );
 
   // 3. PATCH /:id (Actualizar parcial)
@@ -103,15 +107,15 @@ export async function tourRoutes(app: FastifyInstance) {
 
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
-    }
+    },
   );
 
   server.delete(
     "/:id",
     {
       schema: {
-        params: getTourByIdParamsSchema
-      }
+        params: getTourByIdParamsSchema,
+      },
     },
     async (request, reply) => {
       try {
@@ -138,6 +142,6 @@ export async function tourRoutes(app: FastifyInstance) {
 
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
-    }
+    },
   );
 }

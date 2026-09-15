@@ -6,7 +6,7 @@ import "dotenv/config";
 const connectionString = process.env.DATABASE_URL;
 
 if (!connectionString) {
-    throw new Error("DATABASE_URL no está definida en las variables de entorno");
+  throw new Error("DATABASE_URL no está definida en las variables de entorno");
 }
 
 // Para las migraciones, abrimos una conexión dedicada de un solo cliente (max: 1)
@@ -15,15 +15,15 @@ const migrationClient = postgres(connectionString, { max: 1 });
 const db = drizzle(migrationClient);
 
 async function main() {
-    console.log("⏳ Ejecutando migraciones en la base de datos...");
+  console.log("⏳ Ejecutando migraciones en la base de datos...");
 
-    await migrate(db, { migrationsFolder: "./drizzle" });
+  await migrate(db, { migrationsFolder: "./drizzle" });
 
-    console.log("✅ ¡Migraciones aplicadas con éxito!");
-    await migrationClient.end();
+  console.log("✅ ¡Migraciones aplicadas con éxito!");
+  await migrationClient.end();
 }
 
 main().catch((err) => {
-    console.error("❌ Error crítico al aplicar las migraciones:", err);
-    process.exit(1);
+  console.error("❌ Error crítico al aplicar las migraciones:", err);
+  process.exit(1);
 });

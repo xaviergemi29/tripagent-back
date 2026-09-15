@@ -29,9 +29,7 @@ export const baseTourSchema = z.object({
   acceptsBankTransfer: z.boolean().default(false),
   bankDetails: z.string().optional(),
   acceptsCreditCard: z.boolean().default(true),
-  paymentLink: z
-    .union([z.literal(""), z.url("Debe ser una URL válida")])
-    .optional(),
+  paymentLink: z.union([z.literal(""), z.url("Debe ser una URL válida")]).optional(),
   // postPaymentInstructions: z
   //   .string()
   //   .trim()
@@ -39,13 +37,15 @@ export const baseTourSchema = z.object({
   acceptsCash: z.boolean().default(false),
   cashInstructions: z.string().optional(),
 
-  boardingPoints: z.array(
-    z.object({
-      id: z.uuid("ID inválido").default(() => crypto.randomUUID()), 
-      location: z.string().min(3, "La ubicación es requerida"),
-      time: z.string().regex(/^([01]\d|2[0-3]):?([0-5]\d)$/, "Formato HH:MM"),
-    })
-  ).min(1, "Debes agregar al menos un punto de abordaje"),
+  boardingPoints: z
+    .array(
+      z.object({
+        id: z.uuid("ID inválido").default(() => crypto.randomUUID()),
+        location: z.string().min(3, "La ubicación es requerida"),
+        time: z.string().regex(/^([01]\d|2[0-3]):?([0-5]\d)$/, "Formato HH:MM"),
+      }),
+    )
+    .min(1, "Debes agregar al menos un punto de abordaje"),
 });
 
 // 2. Refinamiento encapsulado
@@ -81,13 +81,11 @@ function withPaymentRefinements<T extends z.ZodTypeAny>(schema: T) {
 export const createTourBodySchema = withPaymentRefinements(baseTourSchema);
 export const updateTourBodySchema = withPaymentRefinements(baseTourSchema.partial());
 
-
 export const getToursQuerySchema = z.object({
   search: z.string().trim().optional(),
   limit: z.coerce.number().min(1).max(100).default(100),
-  offset: z.coerce.number().min(0).default(0)
+  offset: z.coerce.number().min(0).default(0),
 });
-
 
 // Tipos de TypeScript inferidos
 export type CreateTourBody = z.infer<typeof createTourBodySchema>;

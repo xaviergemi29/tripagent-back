@@ -28,7 +28,7 @@ export async function travelerRoutes(app: FastifyInstance) {
         app.log.error(error, "Error al consultar viajeros");
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
-    }
+    },
   );
 
   // 2. GET /:id
@@ -54,27 +54,27 @@ export async function travelerRoutes(app: FastifyInstance) {
         app.log.error(error, "Error al consultar viajero por ID");
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
-    }
+    },
   );
 
   server.get(
     "/:id/history",
     {
-      schema : {
-        params: getTravelerByIdParamsSchema
-      }
-    }, 
+      schema: {
+        params: getTravelerByIdParamsSchema,
+      },
+    },
     async (request, reply) => {
       try {
         const history = await TravelerService.getTravelerHistory(request.params.id, AGENCY_ID);
-        if (!history) return reply.status(400).send({error: "Viajeor no encontrado"});
+        if (!history) return reply.status(400).send({ error: "Viajeor no encontrado" });
         return reply.status(200).send(history);
       } catch (error) {
         app.log.error(error, "Error al consultar historial del viajero");
         return reply.status(500).send({ error: "Error interno" });
       }
-    }
-  )
+    },
+  );
 
   // 3. PATCH /:id
   server.patch(
@@ -109,7 +109,7 @@ export async function travelerRoutes(app: FastifyInstance) {
         }
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
-    }
+    },
   );
 
   // 4. DELETE /:id (Cambiado de 'app.delete' a 'server.delete')
@@ -146,7 +146,7 @@ export async function travelerRoutes(app: FastifyInstance) {
 
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
-    }
+    },
   );
 
   server.post(
@@ -164,12 +164,13 @@ export async function travelerRoutes(app: FastifyInstance) {
         app.log.error(error, "Error al crear el viajero");
 
         if (error?.code === "23505") {
-          return reply.status(409).send({ error: "Ya existe un viajero registrado con ese título" });
+          return reply
+            .status(409)
+            .send({ error: "Ya existe un viajero registrado con ese título" });
         }
 
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
-
-    }
-  )
+    },
+  );
 }
