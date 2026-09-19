@@ -1,0 +1,1 @@
+ALTER TABLE "tours" ADD COLUMN "brochure_url" text;

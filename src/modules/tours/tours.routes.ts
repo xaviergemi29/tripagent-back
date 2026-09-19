@@ -8,6 +8,17 @@ import {
 } from "./tours.schema.js";
 import { TourService } from "./tours.service.js";
 import { AGENCY_ID } from "../../constants.js";
+import fs from "node:fs";
+import path from "node:path";
+import type { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+
+const UPLOADS_DIR = path.join(process.cwd(), "public", "uploads", "brochures");
+
+// Inicialización asíncrona/idempotente de directorio
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
 
 export async function tourRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
@@ -141,6 +152,47 @@ export async function tourRoutes(app: FastifyInstance) {
         }
 
         return reply.status(500).send({ error: "Error interno del servidor" });
+      }
+    },
+  );
+
+  server.post(
+    "/:id/brochure",
+    {
+      schema: {
+        params: getTourByIdParamsSchema,
+      },
+    },
+    async (request, reply) => {
+      try {
+        const { id } = request.params;
+
+        // 1. Interceptar el archivo multipart a través del plugin de Fastify
+        const data = await request.file();
+
+        if (!data) {
+          return reply.status(400).send({ error: "No se adjuntó ningún archivo" });
+        }
+
+        if (data.mimetype !== "application/pdf") {
+          return reply.status(400).send({ error: "El archivo debe ser un PDF válido" });
+        }
+
+        // 2. Definir ruta local y nombre seguro
+        const safeFilename = `tour-${id}-${Date.now()}.pdf`;
+        const savePath = path.join(UPLOADS_DIR, safeFilename);
+
+        // 3. Transferencia asíncrona mediante Streams (Non-blocking I/O)
+        await pipeline(data.file as unknown as Readable, fs.createWriteStream(savePath));
+
+        // 4. Actualizar ruta relativa en PostgreSQL
+        const publicUrl = `/uploads/brochures/${safeFilename}`;
+        const tour = await TourService.updateBrochureUrl(id, publicUrl, AGENCY_ID);
+
+        return reply.status(200).send({ data: tour });
+      } catch (error) {
+        app.log.error(error, "Error al procesar la subida del folleto");
+        return reply.status(500).send({ error: "Error interno al procesar el archivo" });
       }
     },
   );

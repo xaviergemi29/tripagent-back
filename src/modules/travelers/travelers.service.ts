@@ -1,6 +1,6 @@
-import { ilike, or, count, desc, eq, and, isNull, ne } from "drizzle-orm";
+import { ilike, or, count, desc, eq, and, isNull, ne, sql, getTableColumns } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { agencies, bookings, travelers } from "../../db/schema.js";
+import { bookingPassengers, bookings, tours, travelers } from "../../db/schema.js";
 import type {
   GetTravelersQuery,
   UpdateTravelerBody,
@@ -35,7 +35,18 @@ export class TravelerService {
     );
 
     const data = await db
-      .select()
+      .select({
+        ...getTableColumns(travelers),
+
+        tripCount: sql<number>`(
+          SELECT count(*)::int
+          FROM ${bookingPassengers} bp
+          JOIN ${bookings} b ON b.id = bp.booking_id
+          WHERE bp.traveler_id = "travelers"."id"
+            AND bp.status = 'ACTIVE'
+            AND b.booking_status != 'CANCELLED'
+        )`.mapWith(Number),
+      })
       .from(travelers)
       .where(whereClause)
       .orderBy(desc(travelers.createdAt))
@@ -116,44 +127,64 @@ export class TravelerService {
   }
 
   static async getTravelerHistory(travelerId: string, agencyId: string) {
-    // 1. Traemos al viajero con sus reservas y tours anidados gracias a tus relations()
+    // 1. Validar existencia del viajero
     const traveler = await db.query.travelers.findFirst({
       where: and(
         eq(travelers.agencyId, agencyId),
         eq(travelers.id, travelerId),
         isNull(travelers.deletedAt),
       ),
-      with: {
-        bookings: {
-          // Excluimos las canceladas para las métricas de valor real
-          where: ne(bookings.status, "CANCELLED"),
-          orderBy: (bookings, { desc }) => [desc(bookings.createdAt)],
-          with: {
-            tour: {
-              columns: {
-                title: true,
-                departureDateTime: true,
-              },
-            },
-          },
-        },
-      },
     });
 
     if (!traveler) return null;
 
-    // 2. Calculamos las métricas en memoria (O(1) ya que los arrays de un solo usuario son pequeños)
-    const totalTrips = traveler.bookings.length;
-    const lifetimeValue = traveler.bookings.reduce(
-      (sum, booking) => sum + Number(booking.amountPaid),
-      0,
-    );
+    // 2. Extraer TODO el historial desde el manifiesto (bookingPassengers)
+    const passengerRecords = await db
+      .select({
+        id: bookingPassengers.id,
+        isTitular: bookingPassengers.isTitular,
+        passengerStatus: bookingPassengers.status,
+        bookingStatus: bookings.status,
+        amountPaid: bookings.amountPaid,
+        tourTitle: tours.title,
+        departureDateTime: tours.departureDateTime,
+      })
+      .from(bookingPassengers)
+      .innerJoin(bookings, eq(bookingPassengers.bookingId, bookings.id))
+      .innerJoin(tours, eq(bookings.tourId, tours.id))
+      .where(eq(bookingPassengers.travelerId, travelerId))
+      .orderBy(desc(tours.departureDateTime));
+
+    // 3. Procesamiento de Reglas de Negocio en memoria
+    let lifetimeValue = 0;
+    let activeTripsCount = 0;
+
+    const history = passengerRecords.map((record) => {
+      const isCancelled =
+        record.passengerStatus === "CANCELLED" || record.bookingStatus === "CANCELLED";
+
+      if (!isCancelled) {
+        activeTripsCount++;
+        // El LTV solo suma si el viajero fue quien pagó (Titular)
+        if (record.isTitular) {
+          lifetimeValue += Number(record.amountPaid);
+        }
+      }
+
+      return {
+        ...record,
+        isCancelled, // Flag conveniente para el Front-End
+      };
+    });
+
     return {
       ...traveler,
       metrics: {
-        totalTrips,
+        totalTrips: activeTripsCount,
         lifetimeValue,
+        isHabitualCompanion: lifetimeValue === 0 && activeTripsCount > 0,
       },
+      history, // Mandamos la lista procesada en lugar del anidamiento de Drizzle
     };
   }
 }

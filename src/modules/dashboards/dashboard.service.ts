@@ -3,6 +3,29 @@ import { db } from "../../db/index.js";
 import { bookings, tours } from "../../db/schema.js";
 
 export class DashboardService {
+  static getTourTemporalStatus(departureDate: string, isActive: boolean): string {
+    // Regla 1: Cancelación manual absoluta
+    if (!isActive) return "CANCELADO";
+
+    // Extraemos la fecha actual exacta en México (YYYY-MM-DD)
+    const todayMX = new Date().toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" });
+
+    // Validamos que departureDate exista antes de operar
+    if (!departureDate) return "PRÓXIMO";
+
+    // Matemática de fechas segura tipada explícitamente
+    const tourDate = new Date(`${departureDate}T12:00:00Z`);
+    tourDate.setDate(tourDate.getDate() + 1); // +24 horas (1 día de tolerancia)
+
+    // Aseguramos que el resultado no sea undefined usando un fallback o conversión segura
+    const toleranceDate: string = tourDate.toISOString().split("T")[0] ?? departureDate;
+
+    // Regla 2: Evaluaciones temporales
+    if (todayMX < departureDate) return "PRÓXIMO";
+    if (todayMX >= departureDate && todayMX <= toleranceDate) return "EN CURSO";
+    return "FINALIZADO";
+  }
+
   static async getTourDashboard(agencyId: string, tourId: string) {
     const tour = await db.query.tours.findFirst({
       where: and(eq(tours.id, tourId), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)),
@@ -120,6 +143,7 @@ export class DashboardService {
       tourId: tour.id,
       title: tour.title,
       departureDateTime: tour.departureDateTime,
+      temporalStatus: this.getTourTemporalStatus(tour.departureDateTime, tour.isActive),
       metrics: {
         occupancy: { current: currentOccupancy, max: tour.maxCapacity },
         revenue: { projected: tour.maxCapacity * Number(tour.price), collected: collectedRevenue },

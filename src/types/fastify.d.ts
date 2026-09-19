@@ -1,5 +1,6 @@
 import "@fastify/jwt";
 import { FastifyRequest, FastifyReply } from "fastify";
+import "@fastify/multipart";
 
 // 1. Ampliación para la instancia de Fastify (esto sí va en el módulo "fastify")
 declare module "fastify" {
@@ -21,5 +22,14 @@ declare module "@fastify/jwt" {
       agencyId: string;
       role: "ADMIN" | "SALES" | "GUIDE";
     };
+  }
+}
+
+declare module "fastify" {
+  interface FastifyRequest {
+    // Si estás usando `request.file()`
+    file(): Promise<import("@fastify/multipart").MultipartFile | undefined>;
+    // Si usas múltiples archivos con `request.files()`
+    files(): AsyncIterableIterator<import("@fastify/multipart").MultipartFile>;
   }
 }

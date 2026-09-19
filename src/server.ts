@@ -17,9 +17,26 @@ import fastifyCookie from "@fastify/cookie";
 import fastifyJwt from "@fastify/jwt";
 import { authRoutes } from "./modules/auth/auth.routes.js";
 import { paymentRoutes } from "./modules/payments/payments.routes.js";
+import multipart from "@fastify/multipart";
+import { tourBrochureRoutes } from "./modules/tours-public/tours-public.routes.js";
+import path from "node:path";
+import fastifyStatic from "@fastify/static";
 
 const buildApp = async () => {
   const app = Fastify({ logger: true }).withTypeProvider<ZodTypeProvider>();
+
+  await app.register(fastifyStatic, {
+    root: path.join(process.cwd(), "public"),
+    prefix: "/public/", // La URL será: http://localhost:3001/public/uploads/brochures/archivo.pdf
+  });
+
+  await app.register(multipart, {
+    limits: {
+      fileSize: 5 * 1024 * 1024, // Límite estricto de 5MB
+      files: 1, // Solo 1 archivo por request
+    },
+  });
+
   // 1. Registrar el plugin de cookies
   await app.register(fastifyCookie, {
     secret: process.env.COOKIE_SECRET || "tu-secreto-super-seguro", // Opcional, para cookies firmadas (signed cookies)
@@ -69,6 +86,7 @@ const buildApp = async () => {
   await app.register(bookingPassengersRoutes, { prefix: "/api/bookingPassengers" });
   await app.register(paymentRoutes, { prefix: "/api/payments" });
   await app.register(authRoutes, { prefix: "/api/auth" });
+  await app.register(tourBrochureRoutes, { prefix: "api/tour-brochure" });
   return app;
 };
 

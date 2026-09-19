@@ -5,6 +5,30 @@ import { tours } from "../../db/schema.js";
 import type { CreateTourBody, GetToursQuery, UpdateTourBody } from "./tours.schema.js";
 
 export class TourService {
+  // 🚀 NUEVO: Helpers puro y aislado para lógica temporal
+  static getTourTemporalStatus(departureDate: string, isActive: boolean): string {
+    // Regla 1: Cancelación manual absoluta
+    if (!isActive) return "CANCELADO";
+
+    // Extraemos la fecha actual exacta en México (YYYY-MM-DD)
+    const todayMX = new Date().toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" });
+
+    // Validamos que departureDate exista antes de operar
+    if (!departureDate) return "PRÓXIMO";
+
+    // Matemática de fechas segura tipada explícitamente
+    const tourDate = new Date(`${departureDate}T12:00:00Z`);
+    tourDate.setDate(tourDate.getDate() + 1); // +24 horas (1 día de tolerancia)
+
+    // Aseguramos que el resultado no sea undefined usando un fallback o conversión segura
+    const toleranceDate: string = tourDate.toISOString().split("T")[0] ?? departureDate;
+
+    // Regla 2: Evaluaciones temporales
+    if (todayMX < departureDate) return "PRÓXIMO";
+    if (todayMX >= departureDate && todayMX <= toleranceDate) return "EN CURSO";
+    return "FINALIZADO";
+  }
+
   static async findTours(query: GetToursQuery, agencyId: string) {
     const { limit, offset, search } = query;
 
@@ -29,8 +53,15 @@ export class TourService {
       .from(tours)
       .where(whereClause);
 
+    const enrichedData = data.map((tour) => {
+      return {
+        ...tour,
+        temporalStatus: this.getTourTemporalStatus(tour.departureDateTime, tour.isActive),
+      };
+    });
+
     return {
-      data,
+      data: enrichedData,
       pagination: {
         total: Number(total),
         limit,
@@ -88,5 +119,16 @@ export class TourService {
       .returning();
 
     return tourDeleted;
+  }
+
+  static async updateBrochureUrl(id: string, brochureUrl: string, agencyId: string) {
+    const [updatedTour] = await db
+      .update(tours)
+      .set({ brochureUrl, updatedAt: new Date().toISOString() })
+      .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
+      .returning();
+
+    if (!updatedTour) throw new Error("Tour no encontrado o sin permisos");
+    return updatedTour;
   }
 }

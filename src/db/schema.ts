@@ -176,7 +176,7 @@ export const tours = pgTable("tours", {
     .$type<{ id: string; time: string; location: string }[]>()
     .default([])
     .notNull(),
-
+  brochureUrl: text("brochure_url"),
   createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true }).defaultNow().notNull(),
   deletedAt: timestamp("deleted_at", { mode: "string", withTimezone: true }),
