@@ -77,6 +77,12 @@ function withPaymentRefinements<T extends z.ZodTypeAny>(schema: T) {
   });
 }
 
+export const assignVehicleBodySchema = z.object({
+  vehicleId: z.uuid({
+    message: "El ID del vehículo debe ser un UUID válido",
+  }),
+});
+
 // 3. Esquemas finales exportados
 export const createTourBodySchema = withPaymentRefinements(baseTourSchema);
 export const updateTourBodySchema = withPaymentRefinements(baseTourSchema.partial());
@@ -88,6 +94,7 @@ export const getToursQuerySchema = z.object({
 });
 
 // Tipos de TypeScript inferidos
+export type AssignVehicleBody = z.infer<typeof assignVehicleBodySchema>;
 export type CreateTourBody = z.infer<typeof createTourBodySchema>;
 export type UpdateTourBody = z.infer<typeof updateTourBodySchema>;
 export type GetToursQuery = z.infer<typeof getToursQuerySchema>;

@@ -42,7 +42,7 @@ export const bookingGroupBodySchema = z.object({
   mainClient: mainClientSchema,
   hasCompanions: z.boolean(),
   companionMethod: z.enum(["MANUAL", "SHARE_LINK"]),
-  groupId: z.uuid("El groupId debe ser un UUID válido"),
+  groupId: z.uuid("El groupId debe ser un UUID válido").optional(),
   companions: z.array(companionSchema),
 });
 

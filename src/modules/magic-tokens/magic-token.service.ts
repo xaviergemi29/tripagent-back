@@ -1,22 +1,26 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { magicTokens } from "../../db/schema.js";
 
 export class MagicTokenService {
   static async validate(tokenValue: string) {
+    // 1. Buscar el token
     const magicToken = await db.query.magicTokens.findFirst({
       where: eq(magicTokens.token, tokenValue),
       with: { tour: true },
     });
 
-    if (!magicToken)
+    // Validar existencia
+    if (!magicToken) {
       return {
         error: {
           code: "NOT_FOUND" as const,
           message: "El enlace mágico no existe o es incorrecto.",
         },
       };
+    }
 
+    // Validar expiración de fecha
     if (new Date() > new Date(magicToken.expiresAt)) {
       return {
         error: {
@@ -26,36 +30,25 @@ export class MagicTokenService {
       };
     }
 
-    if (magicToken.currentUses >= magicToken.maxUses) {
-      return {
-        error: {
-          code: "CAPACITY_REACHED" as const,
-          message: "Este enlace ya alcanzó su límite de registros permitidos.",
-        },
-      };
-    }
+    // 🚀 2. INCREMENTAR TRACKING ATÓMICAMENTE (Background update o Fire-and-Forget)
+    // Usamos sql`` para que PostgreSQL haga el incremento directamente
+    await db
+      .update(magicTokens)
+      .set({
+        currentUses: sql`${magicTokens.currentUses} + 1`,
+      })
+      .where(eq(magicTokens.id, magicToken.id));
 
-    if (!magicToken) {
-      return { isValid: false, error: { message: "El enlace no existe." } };
-    }
-
-    if (new Date() > new Date(magicToken.expiresAt)) {
-      return { isValid: false, error: { message: "Este enlace ha expirado." } };
-    }
-
-    if (magicToken.currentUses >= magicToken.maxUses) {
-      return { isValid: false, error: { message: "Los cupos para este enlace se han agotado." } };
-    }
-
+    // 3. Devolver datos limpios
     return {
       isValid: true,
       data: {
+        availableSeats: magicToken.tour.maxCapacity, // O tu cálculo de disponibilidad
         tour: {
           id: magicToken.tour.id,
           title: magicToken.tour.title,
           boardingPoints: magicToken.tour.boardingPoints,
         },
-        availableSeats: magicToken.maxUses - magicToken.currentUses,
       },
     };
   }

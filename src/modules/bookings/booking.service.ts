@@ -33,14 +33,6 @@ export class BookingService {
       if (!magicToken) throw new Error("Token inválido o no encontrado");
       if (new Date() > new Date(magicToken.expiresAt)) throw new Error("El enlace ha expirado");
 
-      // Calculamos cuántos acompañantes vienen en el payload vs cupos del token
-      const incomingCompanionsCount = payload.hasCompanions ? payload.companions.length : 0;
-      if (magicToken.currentUses + incomingCompanionsCount > magicToken.maxUses) {
-        throw new Error(
-          "El enlace no tiene suficientes cupos válidos para esta cantidad de acompañantes",
-        );
-      }
-
       // 2. Encontrar el Tour
       const tour = await tx.query.tours.findFirst({
         where: eq(tours.id, magicToken.tourId),
@@ -219,14 +211,12 @@ export class BookingService {
       }
 
       // 7. Quemar los usos del Token
-      if (incomingCompanionsCount > 0) {
-        await tx
-          .update(magicTokens)
-          .set({
-            currentUses: magicToken.currentUses + incomingCompanionsCount,
-          })
-          .where(eq(magicTokens.id, magicToken.id));
-      }
+      await tx
+        .update(magicTokens)
+        .set({
+          currentUses: magicToken.currentUses + 1,
+        })
+        .where(eq(magicTokens.id, magicToken.id));
 
       return {
         bookingId: existingBooking.id,

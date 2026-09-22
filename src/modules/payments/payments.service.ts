@@ -1,10 +1,15 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import type { CreatePaymentBody } from "./payments.schema.js";
-import { agencies, bookings, PAYMENT_STATUS, payments } from "../../db/schema.js";
+import { bookings, PAYMENT_STATUS, payments } from "../../db/schema.js";
 
 export class PaymentService {
-  static async registerPayment(bookingId: string, data: CreatePaymentBody, agencyId: string) {
+  static async registerPayment(
+    bookingId: string,
+    data: CreatePaymentBody,
+    agencyId: string,
+    createdByUserId: string,
+  ) {
     return await db.transaction(async (tx) => {
       // 1. Validar existencia y propiedad de la reserva
       const booking = await tx.query.bookings.findFirst({
@@ -26,6 +31,7 @@ export class PaymentService {
           method: data.method,
           type: data.type,
           referenceInfo: data.referenceInfo,
+          createdByUserId,
         })
         .returning();
 
@@ -77,7 +83,13 @@ export class PaymentService {
     });
   }
 
-  static async voidPayment(bookingId: string, paymentId: string, reason: string, agencyId: string) {
+  static async voidPayment(
+    bookingId: string,
+    paymentId: string,
+    reason: string,
+    agencyId: string,
+    createdByUserId: string,
+  ) {
     return await db.transaction(async (tx) => {
       // 1. Buscar el pago original (Usando las llaves foráneas correctas de la tabla payments)
       const originalPayment = await tx.query.payments.findFirst({
@@ -104,6 +116,7 @@ export class PaymentService {
           amount: -Math.abs(Number(originalPayment.amount)),
           method: originalPayment.method,
           referenceInfo: `Anulación: ${reason} (Ref: ${originalPayment.id})`,
+          createdByUserId,
         })
         .returning();
 

@@ -7,7 +7,6 @@ import {
   getTravelersQuerySchema,
   updateTravelerBodySchema,
 } from "./travelers.schema.js";
-import { AGENCY_ID } from "../../constants.js";
 
 export async function travelerRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
@@ -16,13 +15,15 @@ export async function travelerRoutes(app: FastifyInstance) {
   server.get(
     "/",
     {
+      onRequest: [app.authenticate],
       schema: {
         querystring: getTravelersQuerySchema,
       },
     },
     async (request, reply) => {
       try {
-        const result = await TravelerService.findTravelers(request.query, AGENCY_ID);
+        const { agencyId } = request.user;
+        const result = await TravelerService.findTravelers(request.query, agencyId);
         return reply.status(200).send(result);
       } catch (error) {
         app.log.error(error, "Error al consultar viajeros");
@@ -35,6 +36,7 @@ export async function travelerRoutes(app: FastifyInstance) {
   server.get(
     "/:id",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: getTravelerByIdParamsSchema,
       },
@@ -42,8 +44,8 @@ export async function travelerRoutes(app: FastifyInstance) {
     async (request, reply) => {
       try {
         const { id } = request.params;
-
-        const traveler = await TravelerService.findTravelerById(id, AGENCY_ID);
+        const { agencyId } = request.user;
+        const traveler = await TravelerService.findTravelerById(id, agencyId);
         if (!traveler) {
           return reply.status(404).send({
             error: "Viajero no encontrado",
@@ -60,13 +62,15 @@ export async function travelerRoutes(app: FastifyInstance) {
   server.get(
     "/:id/history",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: getTravelerByIdParamsSchema,
       },
     },
     async (request, reply) => {
       try {
-        const history = await TravelerService.getTravelerHistory(request.params.id, AGENCY_ID);
+        const { agencyId } = request.user;
+        const history = await TravelerService.getTravelerHistory(request.params.id, agencyId);
         if (!history) return reply.status(400).send({ error: "Viajeor no encontrado" });
         return reply.status(200).send(history);
       } catch (error) {
@@ -80,6 +84,7 @@ export async function travelerRoutes(app: FastifyInstance) {
   server.patch(
     "/:id",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: getTravelerByIdParamsSchema,
         body: updateTravelerBodySchema,
@@ -88,9 +93,9 @@ export async function travelerRoutes(app: FastifyInstance) {
     async (request, reply) => {
       try {
         const { id } = request.params;
+        const { agencyId } = request.user;
         const body = request.body;
-
-        const result = await TravelerService.updateTraveler(id, body, AGENCY_ID);
+        const result = await TravelerService.updateTraveler(id, body, agencyId);
 
         if (!result) {
           return reply.status(404).send({
@@ -116,15 +121,16 @@ export async function travelerRoutes(app: FastifyInstance) {
   server.delete(
     "/:id",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: getTravelerByIdParamsSchema,
       },
     },
     async (request, reply) => {
       try {
-        // ✅ TypeScript ahora sabe que 'request.params' es { id: string }
         const { id } = request.params;
-        const result = await TravelerService.softDeleteTraveler(id, AGENCY_ID);
+        const { agencyId } = request.user;
+        const result = await TravelerService.softDeleteTraveler(id, agencyId);
 
         if (!result) {
           return reply.status(404).send({
@@ -152,13 +158,15 @@ export async function travelerRoutes(app: FastifyInstance) {
   server.post(
     "/",
     {
+      onRequest: [app.authenticate],
       schema: {
         body: createTravelerBodySchema,
       },
     },
     async (request, reply) => {
       try {
-        const insertedTraveler = await TravelerService.creteTraveler(request.body, AGENCY_ID);
+        const { agencyId } = request.user;
+        const insertedTraveler = await TravelerService.creteTraveler(request.body, agencyId);
         return reply.status(201).send(insertedTraveler);
       } catch (error: any) {
         app.log.error(error, "Error al crear el viajero");

@@ -14,6 +14,8 @@ import {
   date,
 } from "drizzle-orm/pg-core";
 
+export const SEAT_STATUS = pgEnum("seat_status", ["AVAILABLE", "ASSIGNED", "BLOCKED"]);
+
 // Control del ciclo de vida del pasajero individual (Cancelaciones Parciales)
 export const PASSENGER_STATUS = pgEnum("passenger_status", ["ACTIVE", "CANCELLED"]);
 
@@ -148,6 +150,14 @@ export const tours = pgTable("tours", {
   agencyId: uuid("agency_id")
     .references(() => agencies.id, { onDelete: "cascade" })
     .notNull(),
+  vehicleId: uuid("vehicle_id").references(() => vehicles.id, { onDelete: "set null" }),
+  createdByUserId: uuid("created_by_user_id").references(() => agencyUsers.id, {
+    onDelete: "set null",
+  }),
+  updatedByUserId: uuid("updated_by_user_id").references(() => agencyUsers.id, {
+    onDelete: "set null",
+  }),
+
   title: varchar("title", { length: 100 }).notNull(),
   // 🛡️ CAMPOS OCULTOS TEMPORALMENTE (MVP):
   description: text("description").default("").notNull(),
@@ -247,7 +257,9 @@ export const bookingPassengers = pgTable(
     travelerId: uuid("traveler_id")
       .references(() => travelers.id, { onDelete: "cascade" })
       .notNull(),
-
+    seatAssignedByUserId: uuid("seat_assigned_by_user_id").references(() => agencyUsers.id, {
+      onDelete: "set null",
+    }),
     // Regla de Negocio: Saber quién es el dueño financiero de este grupo
     isTitular: boolean("is_titular").default(false).notNull(),
 
@@ -258,7 +270,8 @@ export const bookingPassengers = pgTable(
 
     // Permite "bajar" a un pasajero sin borrar la historia
     status: PASSENGER_STATUS("status").default("ACTIVE").notNull(),
-
+    seatLabel: varchar("seat_label", { length: 10 }),
+    seatAssignedAt: timestamp("seat_assigned_at", { mode: "string", withTimezone: true }),
     createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -285,6 +298,9 @@ export const magicTokens = pgTable("magic_tokens", {
     .references(() => tours.id, { onDelete: "cascade" })
     .notNull(),
   bookingId: uuid("booking_id").references(() => bookings.id, { onDelete: "cascade" }),
+  createdByUserId: uuid("created_by_user_id").references(() => agencyUsers.id, {
+    onDelete: "set null",
+  }),
 
   // El Token criptográfico puro (ej. uuid sin guiones o nanoid)
   token: varchar("token", { length: 255 }).notNull().unique(),
@@ -310,7 +326,9 @@ export const payments = pgTable("payments", {
   bookingId: uuid("booking_id")
     .references(() => bookings.id, { onDelete: "cascade" })
     .notNull(),
-
+  createdByUserId: uuid("created_by_user_id").references(() => agencyUsers.id, {
+    onDelete: "set null",
+  }),
   // Clasificación de la transacción
   type: PAYMENT_TYPE("type").default("PAYMENT").notNull(),
   method: PAYMENT_METHOD("method").notNull(),
@@ -323,9 +341,27 @@ export const payments = pgTable("payments", {
 
   // Quién registró el pago (Si luego implementas usuarios del sistema, aquí iría su UUID)
   // registeredBy: uuid("registered_by"),
-
   createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).defaultNow().notNull(),
 });
+
+export const vehicles = pgTable("vehicles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: varchar("name", { length: 100 }).notNull(), // "Sprinter 20", "Autobús 40"
+  layoutMap: jsonb("layout_map").$type<string[][]>().notNull(),
+});
+
+export const tourBlockedSeats = pgTable(
+  "tour_blocked_seats",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tourId: uuid("tour_id")
+      .references(() => tours.id, { onDelete: "cascade" })
+      .notNull(),
+    seatLabel: varchar("seat_label", { length: 10 }).notNull(),
+    reason: varchar("reason", { length: 255 }).default("STAFF"),
+  },
+  (table) => [uniqueIndex("idx_unique_blocked_seat").on(table.tourId, table.seatLabel)],
+);
 
 // ✅ No olvides agregar la relación para Drizzle Query API al final del archivo
 export const paymentsRelations = relations(payments, ({ one }) => ({
@@ -336,6 +372,10 @@ export const paymentsRelations = relations(payments, ({ one }) => ({
   agency: one(agencies, {
     fields: [payments.agencyId],
     references: [agencies.id],
+  }),
+  createdByUser: one(agencyUsers, {
+    fields: [payments.createdByUserId],
+    references: [agencyUsers.id],
   }),
 }));
 
@@ -383,6 +423,18 @@ export const toursRelations = relations(tours, ({ many, one }) => ({
     fields: [tours.agencyId],
     references: [agencies.id],
   }),
+  vehicle: one(vehicles, {
+    fields: [tours.vehicleId],
+    references: [vehicles.id],
+  }),
+  createdByUser: one(agencyUsers, {
+    fields: [tours.createdByUserId],
+    references: [agencyUsers.id],
+  }),
+  updatedByUser: one(agencyUsers, {
+    fields: [tours.updatedByUserId],
+    references: [agencyUsers.id],
+  }),
 }));
 
 export const bookingPassengersRelations = relations(bookingPassengers, ({ one }) => ({
@@ -424,4 +476,9 @@ export const agenciesRelations = relations(agencies, ({ many }) => ({
   bookings: many(bookings),
   magicTokens: many(magicTokens),
   payments: many(payments),
+}));
+
+// Relación inversa opcional pero recomendada (Un vehículo puede usarse en muchos tours)
+export const vehiclesRelations = relations(vehicles, ({ many }) => ({
+  tours: many(tours),
 }));

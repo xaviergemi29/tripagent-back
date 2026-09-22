@@ -7,7 +7,6 @@ import {
   addPassengerBodySchema,
 } from "./booking-passengers.schema.js";
 import { BookingPassengerService } from "./booking-passengers.service.js";
-import { AGENCY_ID } from "../../constants.js";
 
 export async function bookingPassengersRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
@@ -15,6 +14,7 @@ export async function bookingPassengersRoutes(app: FastifyInstance) {
   server.patch(
     "/:bookingId/passengers/:travelerId/cancel",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: cancelPassengerParamsSchema,
         body: cancelPassengerBodySchema,
@@ -22,6 +22,7 @@ export async function bookingPassengersRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       try {
+        const { agencyId } = request.user;
         const { bookingId, travelerId } = request.params;
         const { penaltyAmount } = request.body;
 
@@ -29,7 +30,7 @@ export async function bookingPassengersRoutes(app: FastifyInstance) {
           bookingId,
           travelerId,
           penaltyAmount,
-          AGENCY_ID,
+          agencyId,
         );
 
         return reply.status(200).send({
@@ -51,10 +52,10 @@ export async function bookingPassengersRoutes(app: FastifyInstance) {
     },
   );
 
-  //NUEVA RUTA: Agregar o reincorporar un pasajero a la reserva
   server.post(
     "/:bookingId/passengers",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: addPassengerParamsSchema,
         body: addPassengerBodySchema,
@@ -62,6 +63,7 @@ export async function bookingPassengersRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       try {
+        const { agencyId } = request.user;
         const { bookingId } = request.params;
         const { travelerId, passengerType, boardingPoint } = request.body;
 
@@ -70,7 +72,7 @@ export async function bookingPassengersRoutes(app: FastifyInstance) {
           travelerId,
           passengerType,
           boardingPoint,
-          AGENCY_ID,
+          agencyId,
         );
 
         return reply.status(201).send({ success: true, data: result });

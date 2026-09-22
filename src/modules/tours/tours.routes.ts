@@ -1,13 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import {
+  assignVehicleBodySchema,
   createTourBodySchema,
   getTourByIdParamsSchema,
   getToursQuerySchema,
   updateTourBodySchema,
 } from "./tours.schema.js";
 import { TourService } from "./tours.service.js";
-import { AGENCY_ID } from "../../constants.js";
 import fs from "node:fs";
 import path from "node:path";
 import type { Readable } from "node:stream";
@@ -27,13 +27,15 @@ export async function tourRoutes(app: FastifyInstance) {
   server.get(
     "/",
     {
+      onRequest: [app.authenticate],
       schema: {
         querystring: getToursQuerySchema,
       },
     },
     async (request, reply) => {
       try {
-        const tours = await TourService.findTours(request.query, AGENCY_ID);
+        const { agencyId } = request.user;
+        const tours = await TourService.findTours(request.query, agencyId);
         return reply.status(200).send(tours);
       } catch (error) {
         app.log.error(error, "Error al consultar tours");
@@ -46,13 +48,15 @@ export async function tourRoutes(app: FastifyInstance) {
   server.post(
     "/",
     {
+      onRequest: [app.authenticate],
       schema: {
         body: createTourBodySchema,
       },
     },
     async (request, reply) => {
       try {
-        const tour = await TourService.createTour(request.body, AGENCY_ID);
+        const { agencyId } = request.user;
+        const tour = await TourService.createTour(request.body, agencyId);
         return reply.status(201).send({ data: tour });
       } catch (error: any) {
         app.log.error(error, "Error al crear tour");
@@ -66,14 +70,16 @@ export async function tourRoutes(app: FastifyInstance) {
   server.get(
     "/:id",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: getTourByIdParamsSchema,
       },
     },
     async (request, reply) => {
       try {
+        const { agencyId } = request.user;
         const { id } = request.params;
-        const tour = await TourService.findTourById(id, AGENCY_ID);
+        const tour = await TourService.findTourById(id, agencyId);
 
         if (!tour) {
           return reply.status(404).send({ error: "Tour no encontrado" });
@@ -92,6 +98,7 @@ export async function tourRoutes(app: FastifyInstance) {
   server.patch(
     "/:id",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: getTourByIdParamsSchema,
         body: updateTourBodySchema,
@@ -99,10 +106,11 @@ export async function tourRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       try {
+        const { agencyId } = request.user;
         const { id } = request.params;
         const body = request.body;
 
-        const tour = await TourService.updateTour(id, body, AGENCY_ID);
+        const tour = await TourService.updateTour(id, body, agencyId);
 
         if (!tour) {
           return reply.status(404).send({ error: "Tour no encontrado" });
@@ -124,6 +132,7 @@ export async function tourRoutes(app: FastifyInstance) {
   server.delete(
     "/:id",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: getTourByIdParamsSchema,
       },
@@ -131,7 +140,8 @@ export async function tourRoutes(app: FastifyInstance) {
     async (request, reply) => {
       try {
         const { id } = request.params;
-        const tour = await TourService.softDeleteTour(id, AGENCY_ID);
+        const { agencyId } = request.user;
+        const tour = await TourService.softDeleteTour(id, agencyId);
 
         if (!tour) {
           return reply.status(404).send({
@@ -159,12 +169,14 @@ export async function tourRoutes(app: FastifyInstance) {
   server.post(
     "/:id/brochure",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: getTourByIdParamsSchema,
       },
     },
     async (request, reply) => {
       try {
+        const { agencyId } = request.user;
         const { id } = request.params;
 
         // 1. Interceptar el archivo multipart a través del plugin de Fastify
@@ -187,12 +199,47 @@ export async function tourRoutes(app: FastifyInstance) {
 
         // 4. Actualizar ruta relativa en PostgreSQL
         const publicUrl = `/uploads/brochures/${safeFilename}`;
-        const tour = await TourService.updateBrochureUrl(id, publicUrl, AGENCY_ID);
+        const tour = await TourService.updateBrochureUrl(id, publicUrl, agencyId);
 
         return reply.status(200).send({ data: tour });
       } catch (error) {
         app.log.error(error, "Error al procesar la subida del folleto");
+        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
         return reply.status(500).send({ error: "Error interno al procesar el archivo" });
+      }
+    },
+  );
+
+  server.patch(
+    "/:id/vehicle",
+    {
+      schema: {
+        params: getTourByIdParamsSchema,
+        body: assignVehicleBodySchema,
+      },
+    },
+    async (request, reply) => {
+      try {
+        const { agencyId } = request.user;
+        const { id } = request.params;
+        const { vehicleId } = request.body;
+
+        const tour = await TourService.assignVehicle(id, vehicleId, agencyId);
+
+        return reply.status(200).send({ data: tour });
+      } catch (error) {
+        app.log.error(error, "Error al asignar vehículo al tour");
+
+        if (error.message.includes("no encontrado")) {
+          return reply.status(404).send({ error: error.message });
+        }
+
+        // Manejo de error de constraint de base de datos (Ej. vehicleId no existe en la tabla vehicles)
+        if (error?.code === "23503") {
+          return reply.status(400).send({ error: "El vehículo seleccionado no existe." });
+        }
+
+        return reply.status(500).send({ error: "Error interno del servidor" });
       }
     },
   );

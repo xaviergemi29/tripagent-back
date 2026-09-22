@@ -21,6 +21,9 @@ import multipart from "@fastify/multipart";
 import { tourBrochureRoutes } from "./modules/tours-public/tours-public.routes.js";
 import path from "node:path";
 import fastifyStatic from "@fastify/static";
+import { vehicleRoutes } from "./modules/vehicles/vehicles.routes.js";
+import { tourSeatsRoutes } from "./modules/tour-seats/tour-seats.routes.js";
+import { tourManifestRoutes } from "./modules/tour-manifest/tour-manifest.routes.js";
 
 const buildApp = async () => {
   const app = Fastify({ logger: true }).withTypeProvider<ZodTypeProvider>();
@@ -87,6 +90,10 @@ const buildApp = async () => {
   await app.register(paymentRoutes, { prefix: "/api/payments" });
   await app.register(authRoutes, { prefix: "/api/auth" });
   await app.register(tourBrochureRoutes, { prefix: "api/tour-brochure" });
+  await app.register(vehicleRoutes, { prefix: "/api/vehicles" });
+  await app.register(tourSeatsRoutes, { prefix: "/api/seats" });
+  await app.register(tourManifestRoutes, { prefix: "/api/manifest" });
+
   return app;
 };
 
