@@ -34,7 +34,7 @@ export async function travelerRoutes(app: FastifyInstance) {
 
   // 2. GET /:id
   server.get(
-    "/:id",
+    "/:travelerId",
     {
       onRequest: [app.authenticate],
       schema: {
@@ -43,9 +43,9 @@ export async function travelerRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       try {
-        const { id } = request.params;
+        const { travelerId } = request.params;
         const { agencyId } = request.user;
-        const traveler = await TravelerService.findTravelerById(id, agencyId);
+        const traveler = await TravelerService.findTravelerById(travelerId, agencyId);
         if (!traveler) {
           return reply.status(404).send({
             error: "Viajero no encontrado",
@@ -60,7 +60,7 @@ export async function travelerRoutes(app: FastifyInstance) {
   );
 
   server.get(
-    "/:id/history",
+    "/:travelerId/history",
     {
       onRequest: [app.authenticate],
       schema: {
@@ -70,7 +70,10 @@ export async function travelerRoutes(app: FastifyInstance) {
     async (request, reply) => {
       try {
         const { agencyId } = request.user;
-        const history = await TravelerService.getTravelerHistory(request.params.id, agencyId);
+        const history = await TravelerService.getTravelerHistory(
+          request.params.travelerId,
+          agencyId,
+        );
         if (!history) return reply.status(400).send({ error: "Viajeor no encontrado" });
         return reply.status(200).send(history);
       } catch (error) {
@@ -82,7 +85,7 @@ export async function travelerRoutes(app: FastifyInstance) {
 
   // 3. PATCH /:id
   server.patch(
-    "/:id",
+    "/:travelerId",
     {
       onRequest: [app.authenticate],
       schema: {
@@ -92,10 +95,10 @@ export async function travelerRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       try {
-        const { id } = request.params;
+        const { travelerId } = request.params;
         const { agencyId } = request.user;
         const body = request.body;
-        const result = await TravelerService.updateTraveler(id, body, agencyId);
+        const result = await TravelerService.updateTraveler(travelerId, body, agencyId);
 
         if (!result) {
           return reply.status(404).send({
@@ -119,7 +122,7 @@ export async function travelerRoutes(app: FastifyInstance) {
 
   // 4. DELETE /:id (Cambiado de 'app.delete' a 'server.delete')
   server.delete(
-    "/:id",
+    "/:travelerId",
     {
       onRequest: [app.authenticate],
       schema: {
@@ -128,9 +131,9 @@ export async function travelerRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       try {
-        const { id } = request.params;
+        const { travelerId } = request.params;
         const { agencyId } = request.user;
-        const result = await TravelerService.softDeleteTraveler(id, agencyId);
+        const result = await TravelerService.softDeleteTraveler(travelerId, agencyId);
 
         if (!result) {
           return reply.status(404).send({

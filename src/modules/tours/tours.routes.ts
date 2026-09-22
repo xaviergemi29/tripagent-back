@@ -39,6 +39,7 @@ export async function tourRoutes(app: FastifyInstance) {
         return reply.status(200).send(tours);
       } catch (error) {
         app.log.error(error, "Error al consultar tours");
+        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
     },
@@ -58,9 +59,10 @@ export async function tourRoutes(app: FastifyInstance) {
         const { agencyId } = request.user;
         const tour = await TourService.createTour(request.body, agencyId);
         return reply.status(201).send({ data: tour });
-      } catch (error: any) {
+      } catch (error) {
         app.log.error(error, "Error al crear tour");
 
+        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
     },
@@ -68,7 +70,7 @@ export async function tourRoutes(app: FastifyInstance) {
 
   // 2. GET /:id (Consultar por UUID)
   server.get(
-    "/:id",
+    "/:tourId",
     {
       onRequest: [app.authenticate],
       schema: {
@@ -78,8 +80,8 @@ export async function tourRoutes(app: FastifyInstance) {
     async (request, reply) => {
       try {
         const { agencyId } = request.user;
-        const { id } = request.params;
-        const tour = await TourService.findTourById(id, agencyId);
+        const { tourId } = request.params;
+        const tour = await TourService.findTourById(tourId, agencyId);
 
         if (!tour) {
           return reply.status(404).send({ error: "Tour no encontrado" });
@@ -96,7 +98,7 @@ export async function tourRoutes(app: FastifyInstance) {
 
   // 3. PATCH /:id (Actualizar parcial)
   server.patch(
-    "/:id",
+    "/:tourId",
     {
       onRequest: [app.authenticate],
       schema: {
@@ -107,17 +109,17 @@ export async function tourRoutes(app: FastifyInstance) {
     async (request, reply) => {
       try {
         const { agencyId } = request.user;
-        const { id } = request.params;
+        const { tourId } = request.params;
         const body = request.body;
 
-        const tour = await TourService.updateTour(id, body, agencyId);
+        const tour = await TourService.updateTour(tourId, body, agencyId);
 
         if (!tour) {
           return reply.status(404).send({ error: "Tour no encontrado" });
         }
 
         return reply.status(200).send({ data: tour });
-      } catch (error: any) {
+      } catch (error) {
         app.log.error(error, "Error al actualizar tour");
 
         if (error?.code === "23505") {
@@ -130,7 +132,7 @@ export async function tourRoutes(app: FastifyInstance) {
   );
 
   server.delete(
-    "/:id",
+    "/:tourId",
     {
       onRequest: [app.authenticate],
       schema: {
@@ -139,9 +141,9 @@ export async function tourRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       try {
-        const { id } = request.params;
+        const { tourId } = request.params;
         const { agencyId } = request.user;
-        const tour = await TourService.softDeleteTour(id, agencyId);
+        const tour = await TourService.softDeleteTour(tourId, agencyId);
 
         if (!tour) {
           return reply.status(404).send({
@@ -152,7 +154,7 @@ export async function tourRoutes(app: FastifyInstance) {
         return reply.status(200).send({
           data: tour,
         });
-      } catch (error: any) {
+      } catch (error) {
         app.log.error(error, "Error al eliminar tour por ID");
 
         if (error?.code === "23503") {
@@ -167,7 +169,7 @@ export async function tourRoutes(app: FastifyInstance) {
   );
 
   server.post(
-    "/:id/brochure",
+    "/:tourId/brochure",
     {
       onRequest: [app.authenticate],
       schema: {
@@ -177,7 +179,7 @@ export async function tourRoutes(app: FastifyInstance) {
     async (request, reply) => {
       try {
         const { agencyId } = request.user;
-        const { id } = request.params;
+        const { tourId } = request.params;
 
         // 1. Interceptar el archivo multipart a través del plugin de Fastify
         const data = await request.file();
@@ -191,7 +193,7 @@ export async function tourRoutes(app: FastifyInstance) {
         }
 
         // 2. Definir ruta local y nombre seguro
-        const safeFilename = `tour-${id}-${Date.now()}.pdf`;
+        const safeFilename = `tour-${tourId}-${Date.now()}.pdf`;
         const savePath = path.join(UPLOADS_DIR, safeFilename);
 
         // 3. Transferencia asíncrona mediante Streams (Non-blocking I/O)
@@ -199,7 +201,7 @@ export async function tourRoutes(app: FastifyInstance) {
 
         // 4. Actualizar ruta relativa en PostgreSQL
         const publicUrl = `/uploads/brochures/${safeFilename}`;
-        const tour = await TourService.updateBrochureUrl(id, publicUrl, agencyId);
+        const tour = await TourService.updateBrochureUrl(tourId, publicUrl, agencyId);
 
         return reply.status(200).send({ data: tour });
       } catch (error) {
@@ -211,8 +213,9 @@ export async function tourRoutes(app: FastifyInstance) {
   );
 
   server.patch(
-    "/:id/vehicle",
+    "/:tourId/vehicle",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: getTourByIdParamsSchema,
         body: assignVehicleBodySchema,
@@ -221,10 +224,10 @@ export async function tourRoutes(app: FastifyInstance) {
     async (request, reply) => {
       try {
         const { agencyId } = request.user;
-        const { id } = request.params;
+        const { tourId } = request.params;
         const { vehicleId } = request.body;
 
-        const tour = await TourService.assignVehicle(id, vehicleId, agencyId);
+        const tour = await TourService.assignVehicle(tourId, vehicleId, agencyId);
 
         return reply.status(200).send({ data: tour });
       } catch (error) {

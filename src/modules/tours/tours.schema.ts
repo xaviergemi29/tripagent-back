@@ -3,10 +3,7 @@ import { TOUR_MODALITIES } from "../../db/schema.js";
 
 // Params Schema (UUID v4 explícito)
 export const getTourByIdParamsSchema = z.object({
-  id: z.uuid({
-    version: "v4",
-    message: "El ID del tour debe ser un UUID válido",
-  }),
+  tourId: z.uuid("El ID del tour debe ser un UUID válido"),
 });
 
 // 1. Definición del ZodObject puro (Permite metaprogramación de Zod como .partial(), .pick(), .omit())

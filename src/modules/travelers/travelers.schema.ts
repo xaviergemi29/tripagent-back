@@ -2,10 +2,7 @@ import { z } from "zod";
 
 // 1. Params Schema (Alineado con tours: UUID v4 explícito)
 export const getTravelerByIdParamsSchema = z.object({
-  id: z.uuid({
-    version: "v4",
-    message: "El ID del viajero debe ser un UUID válido",
-  }),
+  travelerId: z.uuid("El ID del viajero debe ser un UUID válido"),
 });
 
 // 2. Base Schema (Estricto por defecto, sin .optional() en campos requeridos)

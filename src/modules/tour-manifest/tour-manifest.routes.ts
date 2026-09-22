@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
 import { TourManifestService } from "./tour-manifest.service.js";
+import { getTourManifestByIdParamsSchema } from "./tour-manifest.schema.js";
 
 export async function tourManifestRoutes(app: FastifyInstance) {
   app.get(
@@ -8,7 +8,7 @@ export async function tourManifestRoutes(app: FastifyInstance) {
     {
       onRequest: [app.authenticate],
       schema: {
-        params: z.object({ tourId: z.string().uuid() }),
+        params: getTourManifestByIdParamsSchema,
       },
     },
     async (request, reply) => {

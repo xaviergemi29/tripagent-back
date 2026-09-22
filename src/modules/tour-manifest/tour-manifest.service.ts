@@ -28,10 +28,7 @@ export class TourManifestService {
       },
     });
 
-    // 3. Obtener los IDs de bookings válidos
-    const bookingIds = activeBookings.map((b) => b.id);
-
-    // Crear un Map para acceder rápido al cálculo de balance por booking
+    // 3. Crear un Map para acceder rápido al cálculo de balance por booking
     const bookingBalanceMap = new Map<
       string,
       { totalPrice: number; amountPaid: number; balance: number }
@@ -71,18 +68,24 @@ export class TourManifestService {
       }));
     });
 
-    // 5. Agrupar por Punto de Abordaje (Tolerante a ID o Ubicación)
+    // 5. Agrupar por Punto de Abordaje (Tolerante a ID, Ubicación o Formato Compuesto)
     const boardingPointsConfig = tour.boardingPoints || [];
 
     const manifestByBoardingPoint = boardingPointsConfig.map((bp) => {
-      // 🚀 Hacemos la comparación robusta: validamos ID exacto o coincidencia de texto (case-insensitive)
       const pointPassengers = allPassengers.filter((p) => {
         if (!p.boardingPoint) return false;
+
         const normalizedStored = p.boardingPoint.trim().toLowerCase();
         const normalizedId = bp.id.trim().toLowerCase();
         const normalizedLocation = bp.location.trim().toLowerCase();
 
-        return normalizedStored === normalizedId || normalizedStored === normalizedLocation;
+        const expectedComposite = `${bp.location} (${bp.time})`.trim().toLowerCase();
+
+        return (
+          normalizedStored === normalizedId ||
+          normalizedStored === normalizedLocation ||
+          normalizedStored === expectedComposite // <- ¡El match exitoso sucederá aquí!
+        );
       });
 
       return {
@@ -98,11 +101,15 @@ export class TourManifestService {
       if (!p.boardingPoint) return true;
       const normalizedStored = p.boardingPoint.trim().toLowerCase();
 
-      return !boardingPointsConfig.some(
-        (bp) =>
+      // 🚀 Aplicamos la misma lógica tolerante para asegurar que no se dupliquen
+      return !boardingPointsConfig.some((bp) => {
+        const expectedComposite = `${bp.location} (${bp.time})`.trim().toLowerCase();
+        return (
           normalizedStored === bp.id.trim().toLowerCase() ||
-          normalizedStored === bp.location.trim().toLowerCase(),
-      );
+          normalizedStored === bp.location.trim().toLowerCase() ||
+          normalizedStored === expectedComposite
+        );
+      });
     });
 
     // 🚀 FIX CRÍTICO: Solo agregamos la sección de "Sin asignar" si hay pasajeros reales en ella.

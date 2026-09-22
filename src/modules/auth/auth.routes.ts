@@ -57,7 +57,7 @@ export async function authRoutes(app: FastifyInstance) {
       preHandler: [app.authenticate],
     },
     async (request, reply) => {
-      const user = await AuthService.getUserProfile(request.user.sub);
+      const user = await AuthService.getUserProfile(request.user.id);
       return reply.send({ data: user });
     },
   );
