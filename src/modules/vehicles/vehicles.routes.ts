@@ -12,6 +12,7 @@ export async function vehicleRoutes(app: FastifyInstance) {
       return reply.send(data);
     } catch (error) {
       app.log.error(error, "Error fetching vehicles");
+      if (error instanceof Error) return reply.status(500).send({ error: error?.message });
       return reply.status(500).send({ error: "Error interno del servidor" });
     }
   });
@@ -25,10 +26,12 @@ export async function vehicleRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       try {
-        const vehicle = await VehiclesService.createVehicle(request.body);
+        const { body } = request;
+        const vehicle = await VehiclesService.createVehicle(body);
         return reply.status(201).send(vehicle);
       } catch (error) {
         app.log.error(error, "Error creating vehicle");
+        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
     },
