@@ -45,7 +45,9 @@ export class MagicTokenService {
       data: {
         availableSeats: magicToken.tour.maxCapacity, // O tu cálculo de disponibilidad
         tour: {
+          reservedSeats: magicToken.maxUses,
           id: magicToken.tour.id,
+          departureDateTime: magicToken.tour.departureDateTime,
           title: magicToken.tour.title,
           boardingPoints: magicToken.tour.boardingPoints,
         },

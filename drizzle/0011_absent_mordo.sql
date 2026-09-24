@@ -1,0 +1,1 @@
+ALTER TABLE "tours" ADD COLUMN "deposit_per_person" numeric(10, 2) DEFAULT 0 NOT NULL;

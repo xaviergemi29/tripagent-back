@@ -1,9 +1,21 @@
-import { ilike, or, count, desc, eq, and, isNull, isNotNull } from "drizzle-orm";
+import {
+  ilike,
+  or,
+  count,
+  desc,
+  eq,
+  and,
+  isNull,
+  isNotNull,
+  type InferInsertModel,
+} from "drizzle-orm";
 
 import { db } from "../../db/index.js";
 import { tours } from "../../db/schema.js";
 import type { CreateTourBody, GetToursQuery, UpdateTourBody } from "./tours.schema.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
+import { unlink } from "node:fs/promises";
+import path from "node:path";
 
 export class TourService {
   static async findTours(query: GetToursQuery, agencyId: string) {
@@ -71,11 +83,39 @@ export class TourService {
    * Actualiza parcialmente un tour existente.
    */
   static async updateTour(id: string, data: UpdateTourBody, agencyId: string) {
+    const { removeBrochure, ...restData } = data;
+
+    // Esto garantiza que TypeScript chille si intentas hacer update de una columna que no existe
+    const updatePayload = {
+      ...restData,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (removeBrochure) {
+      updatePayload.brochureUrl = null;
+
+      const currentTour = await db.query.tours.findFirst({
+        where: and(eq(tours.id, id), eq(tours.agencyId, agencyId)),
+        columns: { brochureUrl: true },
+      });
+
+      if (currentTour?.brochureUrl) {
+        const fileName = currentTour.brochureUrl.split("/").pop();
+        if (fileName) {
+          const absolutePath = path.join(process.cwd(), "public", "uploads", "brochures", fileName);
+          await unlink(absolutePath).catch((err) =>
+            console.warn(`[FS] No se pudo borrar el folleto físico: ${err.message}`),
+          );
+        }
+      }
+    }
+
     const [tourUpdated] = await db
       .update(tours)
-      .set({ ...data, updatedAt: new Date().toISOString() })
+      .set(updatePayload)
       .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
       .returning();
+
     return tourUpdated;
   }
 

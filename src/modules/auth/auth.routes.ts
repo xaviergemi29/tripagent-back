@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { loginBodySchema } from "./auth.schema.js";
+import { changePasswordBodySchema, loginBodySchema } from "./auth.schema.js";
 import { AuthService } from "./auth.service.js";
 
 export async function authRoutes(app: FastifyInstance) {
@@ -62,7 +62,6 @@ export async function authRoutes(app: FastifyInstance) {
     },
   );
 
-  // 🚪 NUEVO: Endpoint de Logout
   server.post("/logout", async (_, reply) => {
     reply.clearCookie("token", {
       path: "/",
@@ -76,4 +75,33 @@ export async function authRoutes(app: FastifyInstance) {
       message: "Sesión cerrada correctamente",
     });
   });
+
+  // Añadir dentro de authRoutes
+  server.post(
+    "/change-password",
+    {
+      preHandler: [app.authenticate],
+      schema: {
+        body: changePasswordBodySchema,
+      },
+    },
+    async (request, reply) => {
+      try {
+        const userId = request.user.id;
+        await AuthService.changePassword(userId, request.body);
+
+        return reply.status(200).send({
+          success: true,
+          message: "Contraseña actualizada correctamente",
+        });
+      } catch (error) {
+        app.log.error(error, "Error al cambiar contraseña");
+        const errorMessage = error instanceof Error ? error.message : "Error interno del servidor";
+        // Si el error es por validación de negocio, devolvemos 400
+        const statusCode = errorMessage === "La contraseña actual es incorrecta" ? 400 : 500;
+
+        return reply.status(statusCode).send({ error: errorMessage });
+      }
+    },
+  );
 }

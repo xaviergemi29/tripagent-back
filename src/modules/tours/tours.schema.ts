@@ -16,6 +16,7 @@ export const baseTourSchema = z.object({
   //   .min(10, "Menciona qué llevar (ropa, calzado, etc.)"),
   transportModality: z.enum(TOUR_MODALITIES.enumValues).default("TRANSPORT_INCLUDED"),
   price: z.number().positive("El precio debe ser mayor a 0"),
+  depositPerPerson: z.number().min(0, "El anticipo no puede ser negativo").default(0),
   // durationHours: z.number().int().positive("La duración debe ser de al menos 1 hora"),
   // meetingPoint: z.string().trim().min(5, "Punto de encuentro requerido"),
   departureDateTime: z.iso.date("Debe ser formato YYYY-MM-DD"),
@@ -43,11 +44,20 @@ export const baseTourSchema = z.object({
       }),
     )
     .min(1, "Debes agregar al menos un punto de abordaje"),
+  brochureUrl: z.string().nullable().optional(),
 });
 
 // 2. Refinamiento encapsulado
 function withPaymentRefinements<T extends z.ZodTypeAny>(schema: T) {
   return schema.superRefine((data: any, ctx) => {
+    if (data.depositPerPerson > data.price) {
+      ctx.addIssue({
+        code: "custom",
+        message: "El anticipo no puede ser mayor al precio total del tour",
+        path: ["depositPerPerson"],
+      });
+    }
+
     if (data.acceptsBankTransfer && (!data.bankDetails || data.bankDetails.trim().length < 15)) {
       ctx.addIssue({
         code: "custom",
@@ -75,14 +85,14 @@ function withPaymentRefinements<T extends z.ZodTypeAny>(schema: T) {
 }
 
 export const assignVehicleBodySchema = z.object({
-  vehicleId: z.uuid({
-    message: "El ID del vehículo debe ser un UUID válido",
-  }),
+  vehicleId: z.uuid("El ID del vehículo debe ser un UUID válido"),
 });
 
 // 3. Esquemas finales exportados
 export const createTourBodySchema = withPaymentRefinements(baseTourSchema);
-export const updateTourBodySchema = withPaymentRefinements(baseTourSchema.partial());
+export const updateTourBodySchema = withPaymentRefinements(baseTourSchema.partial()).extend({
+  removeBrochure: z.boolean().optional(),
+});
 
 export const getToursQuerySchema = z.object({
   search: z.string().trim().optional(),

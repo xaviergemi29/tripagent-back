@@ -165,7 +165,9 @@ export const tours = pgTable("tours", {
 
   transportModality: TOUR_MODALITIES("transport_modality").default("TRANSPORT_INCLUDED").notNull(),
   price: numeric("price", { precision: 10, scale: 2, mode: "number" }).notNull(),
-  // 🛡️ CAMPOS OCULTOS TEMPORALMENTE (MVP):
+  depositPerPerson: numeric("deposit_per_person", { precision: 10, scale: 2, mode: "number" })
+    .default(0)
+    .notNull(),
   durationHours: integer("duration_hours").default(1).notNull(),
   // meetingPoint: text("meeting_point").notNull(),
   departureDateTime: date("departure_date_time", { mode: "string" }).notNull(),
@@ -346,8 +348,12 @@ export const payments = pgTable("payments", {
 
 export const vehicles = pgTable("vehicles", {
   id: uuid("id").primaryKey().defaultRandom(),
-  name: varchar("name", { length: 100 }).notNull(), // "Sprinter 20", "Autobús 40"
-  layoutMap: jsonb("layout_map").$type<string[][]>().notNull(),
+  agencyId: uuid("agency_id")
+    .references(() => agencies.id, { onDelete: "cascade" })
+    .notNull(), // 🚀 Multi-Tenant: Cada plantilla pertenece a una sola agencia
+  name: varchar("name", { length: 100 }).notNull(),
+  layoutMap: jsonb("layout_map").$type<(string | null)[][]>().notNull(),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).defaultNow().notNull(),
 });
 
 export const tourBlockedSeats = pgTable(
@@ -363,7 +369,6 @@ export const tourBlockedSeats = pgTable(
   (table) => [uniqueIndex("idx_unique_blocked_seat").on(table.tourId, table.seatLabel)],
 );
 
-// ✅ No olvides agregar la relación para Drizzle Query API al final del archivo
 export const paymentsRelations = relations(payments, ({ one }) => ({
   booking: one(bookings, {
     fields: [payments.bookingId],
@@ -476,9 +481,14 @@ export const agenciesRelations = relations(agencies, ({ many }) => ({
   bookings: many(bookings),
   magicTokens: many(magicTokens),
   payments: many(payments),
+  vehicles: many(vehicles),
 }));
 
 // Relación inversa opcional pero recomendada (Un vehículo puede usarse en muchos tours)
-export const vehiclesRelations = relations(vehicles, ({ many }) => ({
+export const vehiclesRelations = relations(vehicles, ({ one, many }) => ({
+  agency: one(agencies, {
+    fields: [vehicles.agencyId],
+    references: [agencies.id],
+  }),
   tours: many(tours),
 }));

@@ -22,7 +22,8 @@ export async function magicTokensRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       try {
-        const result = await MagicTokenService.validate(request.params.token);
+        const { token } = request.params;
+        const result = await MagicTokenService.validate(token);
 
         if (result.error) {
           const statusCode =

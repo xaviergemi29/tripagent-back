@@ -71,6 +71,20 @@
       "when": 1790018358998,
       "tag": "0009_flaky_leech",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790101491655,
+      "tag": "0010_tricky_husk",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790184686580,
+      "tag": "0011_absent_mordo",
+      "breakpoints": true
     }
   ]
 }
