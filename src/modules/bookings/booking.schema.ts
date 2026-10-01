@@ -22,6 +22,10 @@ const companionSchema = baseTravelerSchema
       .optional()
       .or(z.literal("")),
     email: z.email("Inválido").optional().or(z.literal("")),
+    birthDate: z
+      .union([z.iso.date("Formato YYYY-MM-DD"), z.literal("")])
+      .optional()
+      .transform((e) => (e === "" ? undefined : e)),
     boardingPoint: z.string().min(1, "Debes seleccionar en qué punto subirás al autobús"),
   })
   .superRefine((data, ctx) => {

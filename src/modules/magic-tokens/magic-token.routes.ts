@@ -12,11 +12,11 @@ export async function magicTokensRoutes(app: FastifyInstance) {
       schema: {
         params: validateTokenParamsSchema,
         response: {
-          200: tokenValidationResponseSchema,
-          // Devolvemos 400s semánticos según el fallo de negocio
-          404: tokenValidationResponseSchema,
-          410: tokenValidationResponseSchema, // 410 Gone (para expirados)
-          409: tokenValidationResponseSchema, // 409 Conflict (para llenos)
+          // 200: tokenValidationResponseSchema,
+          // // Devolvemos 400s semánticos según el fallo de negocio
+          // 404: tokenValidationResponseSchema,
+          // 410: tokenValidationResponseSchema, // 410 Gone (para expirados)
+          // 409: tokenValidationResponseSchema, // 409 Conflict (para llenos)
         },
       },
     },

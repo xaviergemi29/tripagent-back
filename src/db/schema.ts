@@ -14,6 +14,8 @@ import {
   date,
 } from "drizzle-orm/pg-core";
 
+export const CURRENCIES = pgEnum("currency", ["MXN", "USD"]);
+
 export const SEAT_STATUS = pgEnum("seat_status", ["AVAILABLE", "ASSIGNED", "BLOCKED"]);
 
 // Control del ciclo de vida del pasajero individual (Cancelaciones Parciales)
@@ -76,7 +78,9 @@ export const agencies = pgTable("agencies", {
   // Control de Suscripción
   subscriptionStatus: SUBSCRIPTION_STATUS("subscription_status").default("trialing").notNull(),
   trialEndsAt: timestamp("trial_ends_at", { mode: "string", withTimezone: true }),
-
+  bankName: varchar("bank_name", { length: 100 }),
+  bankAccountHolder: varchar("bank_account_holder", { length: 255 }),
+  clabeNumber: varchar("clabe_number", { length: 18 }),
   isActive: boolean("is_active").default(true).notNull(),
   // Timestamps y Soft Delete
   createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).defaultNow().notNull(),
@@ -144,7 +148,6 @@ export const travelers = pgTable(
 // ============================================================================
 // 4. TOURS
 // ============================================================================
-
 export const tours = pgTable("tours", {
   id: uuid("id").primaryKey().defaultRandom(),
   agencyId: uuid("agency_id")
@@ -159,28 +162,23 @@ export const tours = pgTable("tours", {
   }),
 
   title: varchar("title", { length: 100 }).notNull(),
-  // 🛡️ CAMPOS OCULTOS TEMPORALMENTE (MVP):
   description: text("description").default("").notNull(),
-  tourRecommendations: text("tour_recommendations").default("").notNull(),
-
   transportModality: TOUR_MODALITIES("transport_modality").default("TRANSPORT_INCLUDED").notNull(),
   price: numeric("price", { precision: 10, scale: 2, mode: "number" }).notNull(),
+  currency: CURRENCIES("currency").default("MXN").notNull(),
   depositPerPerson: numeric("deposit_per_person", { precision: 10, scale: 2, mode: "number" })
     .default(0)
     .notNull(),
-  durationHours: integer("duration_hours").default(1).notNull(),
-  // meetingPoint: text("meeting_point").notNull(),
   departureDateTime: date("departure_date_time", { mode: "string" }).notNull(),
+  returnDate: date("return_date", { mode: "string" }),
   maxCapacity: integer("max_capacity").notNull(),
   isActive: boolean("is_active").default(true).notNull(),
 
   // Configuración de cobro
   acceptsBankTransfer: boolean("accepts_bank_transfer").default(false).notNull(),
-  bankDetails: text("bank_details"),
   acceptsCreditCard: boolean("accepts_credit_card").default(false).notNull(),
   paymentLink: text("payment_link"),
-  // 🛡️ CAMPOS OCULTOS TEMPORALMENTE (MVP):
-  ppostPaymentInstructions: text("post_payment_instructions").default("").notNull(),
+  postPaymentInstructions: text("post_payment_instructions").default("").notNull(),
 
   acceptsCash: boolean("accepts_cash").default(false).notNull(),
   cashInstructions: text("cash_instructions"),
@@ -219,6 +217,7 @@ export const bookings = pgTable(
     paymentStatus: PAYMENT_STATUS("payment_status").default("PENDING").notNull(),
 
     // Guardamos el precio en el momento de la reserva por si el Tour cambia de precio después
+    currency: CURRENCIES("currency").default("MXN").notNull(),
     totalPrice: numeric("total_price", { precision: 10, scale: 2, mode: "number" }).notNull(),
     amountPaid: numeric("amount_paid", { precision: 10, scale: 2, mode: "number" })
       .default(0)

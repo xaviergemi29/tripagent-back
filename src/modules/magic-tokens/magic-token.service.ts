@@ -4,13 +4,16 @@ import { magicTokens } from "../../db/schema.js";
 
 export class MagicTokenService {
   static async validate(tokenValue: string) {
-    // 1. Buscar el token
+    // 1. Buscar el token y traer la relación del tour y su agencia
     const magicToken = await db.query.magicTokens.findFirst({
       where: eq(magicTokens.token, tokenValue),
-      with: { tour: true },
+      with: {
+        tour: {
+          with: { agency: true },
+        },
+      },
     });
 
-    // Validar existencia
     if (!magicToken) {
       return {
         error: {
@@ -20,7 +23,6 @@ export class MagicTokenService {
       };
     }
 
-    // Validar expiración de fecha
     if (new Date() > new Date(magicToken.expiresAt)) {
       return {
         error: {
@@ -30,8 +32,7 @@ export class MagicTokenService {
       };
     }
 
-    // 🚀 2. INCREMENTAR TRACKING ATÓMICAMENTE (Background update o Fire-and-Forget)
-    // Usamos sql`` para que PostgreSQL haga el incremento directamente
+    // 2. Incremento atómico
     await db
       .update(magicTokens)
       .set({
@@ -39,16 +40,34 @@ export class MagicTokenService {
       })
       .where(eq(magicTokens.id, magicToken.id));
 
-    // 3. Devolver datos limpios
+    // 3. Devolver datos limpios e hidratados para TourSummaryCard y BookingSuccessView
     return {
       isValid: true,
       data: {
-        availableSeats: magicToken.tour.maxCapacity, // O tu cálculo de disponibilidad
+        availableSeats: magicToken.tour.maxCapacity,
         tour: {
-          reservedSeats: magicToken.maxUses,
           id: magicToken.tour.id,
-          departureDateTime: magicToken.tour.departureDateTime,
           title: magicToken.tour.title,
+          departureDateTime: magicToken.tour.departureDateTime,
+
+          // Finanzas (Conversión segura a Number asumiendo que Drizzle los trae como string decimales)
+          priceTotalPerPassenger: Number(magicToken.tour.price),
+          depositPerPassenger: magicToken.tour.depositPerPerson
+            ? Number(magicToken.tour.depositPerPerson)
+            : null,
+
+          // Agencia y métodos de pago
+          agency: {
+            name: magicToken.tour.agency.name,
+            phone: magicToken.tour.agency.phone,
+            bankName: magicToken.tour.agency.bankName,
+            accountHolder: magicToken.tour.agency.bankAccountHolder,
+            clabeNumber: magicToken.tour.agency.clabeNumber,
+          },
+          acceptsBankTransfer: magicToken.tour.acceptsBankTransfer,
+          acceptsCreditCard: magicToken.tour.acceptsCreditCard,
+          paymentLink: magicToken.tour.paymentLink,
+
           boardingPoints: magicToken.tour.boardingPoints,
         },
       },

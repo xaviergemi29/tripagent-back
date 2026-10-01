@@ -1,0 +1,1 @@
+ALTER TABLE "tours" ADD COLUMN "return_date" date NOT NULL;

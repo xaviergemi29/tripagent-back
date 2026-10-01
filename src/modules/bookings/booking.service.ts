@@ -2,6 +2,7 @@ import { and, count, eq, inArray, isNull, ne } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import type { CreateBookingBody, CreateReservationBookingBody } from "./booking.schema.js";
 import {
+  agencies,
   bookingPassengers,
   bookings,
   magicTokens,
@@ -36,6 +37,7 @@ export class BookingService {
       // 2. Encontrar el Tour
       const tour = await tx.query.tours.findFirst({
         where: eq(tours.id, magicToken.tourId),
+        with: { agency: true },
       });
       if (!tour) throw new Error("Tour no encontrado");
 
@@ -58,6 +60,7 @@ export class BookingService {
             emergencyContactName: payload.mainClient.emergencyContactName,
             emergencyContactPhone: payload.mainClient.emergencyContactPhone,
             medicalNotes: payload.mainClient.medicalNotes,
+            birthDate: payload.mainClient.birthDate,
             updatedAt: new Date().toISOString(),
           })
           .where(eq(travelers.id, existingTitular.id));
@@ -140,6 +143,7 @@ export class BookingService {
                 emergencyContactName: comp.emergencyContactName,
                 emergencyContactPhone: comp.emergencyContactPhone,
                 medicalNotes: comp.medicalNotes,
+                birthDate: comp.birthDate,
                 updatedAt: new Date().toISOString(),
               })
               .where(eq(travelers.id, existingComp.id));
@@ -218,15 +222,40 @@ export class BookingService {
         })
         .where(eq(magicTokens.id, magicToken.id));
 
+      let totalPassengers = 1; // Titular por defecto
+      const companionNames: string[] = [];
+
+      if (payload.hasCompanions && payload.companions) {
+        totalPassengers += payload.companions.length;
+        payload.companions.forEach((c) => {
+          if (c.fullName?.trim()) {
+            companionNames.push(c.fullName.trim());
+          }
+        });
+      }
+
       return {
         bookingId: existingBooking.id,
+        agencyName: tour.agency.name,
+        agencyPhone: tour.agency.phone,
+
+        // Pasajeros registrados
+        titularName: payload.mainClient.fullName,
+        companionNames,
+
+        // Finanzas calculadas en backend
+        totalAmount: Number(tour.price) * totalPassengers,
+        depositAmount:
+          tour.depositPerPerson > 0 ? Number(tour.depositPerPerson) * totalPassengers : null,
+        // Métodos de Pago
         acceptsBankTransfer: tour.acceptsBankTransfer,
-        bankDetails: tour.bankDetails,
+        bankName: tour.agency.bankName,
+        accountHolder: tour.agency.bankAccountHolder,
+        clabeNumber: tour.agency.clabeNumber,
+
         acceptsCreditCard: tour.acceptsCreditCard,
         paymentLink: tour.paymentLink,
-        acceptsCash: tour.acceptsCash,
-        cashInstructions: tour.cashInstructions,
-        totalPassengersRegistered: passengerIdsInBus.length + newPassengersToInsert.length,
+
         message: "Registro completado con éxito.",
       };
     });

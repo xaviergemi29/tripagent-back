@@ -1,0 +1,1 @@
+ALTER TABLE "tours" DROP COLUMN "tour_recommendations";

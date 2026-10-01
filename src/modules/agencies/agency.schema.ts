@@ -7,17 +7,18 @@ export const baseAgencySchema = z.object({
   phone: z
     .string()
     .trim()
-    .regex(/^\+[1-9]\d{1,14}$/, "Debe ser un teléfono válido (E.164)"),
-  logoUrl: z.url("Debe ser una URL válida").optional(),
+    .regex(/^(\+)?\d{10}$/, "Debe ser un teléfono válido (E.164)"),
+  logoUrl: z.url("Debe ser una URL válida").optional().or(z.literal("")),
   email: z.email("Correo electrónico inválido"),
   subscriptionStatus: z.enum(SUBSCRIPTION_STATUS.enumValues).default("trialing"),
   isActive: z.boolean().default(true),
+  bankName: z.string().optional().nullable(),
+  bankAccountHolder: z.string().optional().nullable(),
+  clabeNumber: z.string().max(18, "Máximo 18 dígitos").optional().nullable(),
 });
 
-// ✅ Esquema específico para creación (Omitimos trialEndsAt porque lo calcula el servidor)
 export const createAgencyBodySchema = baseAgencySchema;
 
-// ✅ Esquema para actualización (Aquí sí permitimos modificar el trialEndsAt opcionalmente en formato ISO)
 export const updateAgencyBodySchema = baseAgencySchema
   .extend({
     trialEndsAt: z.iso.datetime("Debe ser una fecha ISO 8601 válida").optional(),
@@ -25,10 +26,7 @@ export const updateAgencyBodySchema = baseAgencySchema
   .partial();
 
 export const getAgencybyIdParamSchema = z.object({
-  id: z.uuid({
-    version: "v4",
-    message: "El ID de la agencia debe ser un UUID válido",
-  }),
+  id: z.uuid("El ID de la agencia debe ser un UUID válido"),
 });
 
 export type CreateAgencyBody = z.infer<typeof createAgencyBodySchema>;

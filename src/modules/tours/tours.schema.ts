@@ -1,39 +1,38 @@
 import { z } from "zod";
-import { TOUR_MODALITIES } from "../../db/schema.js";
+import { CURRENCIES, TOUR_MODALITIES } from "../../db/schema.js";
 
-// Params Schema (UUID v4 explícito)
+const emptyToNull = z.preprocess(
+  (val) => (typeof val === "string" && val.trim() === "" ? null : val),
+  z.string().nullable().optional(),
+);
+
 export const getTourByIdParamsSchema = z.object({
   tourId: z.uuid("El ID del tour debe ser un UUID válido"),
 });
 
-// 1. Definición del ZodObject puro (Permite metaprogramación de Zod como .partial(), .pick(), .omit())
 export const baseTourSchema = z.object({
   title: z.string().trim().min(5, "El título debe tener al menos 5 caracteres").max(100),
-  // description: z.string().trim().min(20, "Añade una descripción operativa"),
-  // tourRecommendations: z
-  //   .string()
-  //   .trim()
-  //   .min(10, "Menciona qué llevar (ropa, calzado, etc.)"),
   transportModality: z.enum(TOUR_MODALITIES.enumValues).default("TRANSPORT_INCLUDED"),
   price: z.number().positive("El precio debe ser mayor a 0"),
+  currency: z.enum(CURRENCIES.enumValues).default("MXN"),
   depositPerPerson: z.number().min(0, "El anticipo no puede ser negativo").default(0),
-  // durationHours: z.number().int().positive("La duración debe ser de al menos 1 hora"),
-  // meetingPoint: z.string().trim().min(5, "Punto de encuentro requerido"),
-  departureDateTime: z.iso.date("Debe ser formato YYYY-MM-DD"),
+
+  departureDateTime: z.string().min(10, "Formato YYYY-MM-DD requerido"),
+  returnDate: emptyToNull,
+
   maxCapacity: z.number().int().positive("La capacidad debe ser de al menos 1 asiento"),
   isActive: z.boolean().default(true),
 
-  // Configuración de Cobro
   acceptsBankTransfer: z.boolean().default(false),
-  bankDetails: z.string().optional(),
-  acceptsCreditCard: z.boolean().default(true),
-  paymentLink: z.union([z.literal(""), z.url("Debe ser una URL válida")]).optional(),
-  // postPaymentInstructions: z
-  //   .string()
-  //   .trim()
-  //   .min(10, "Instrucciones de pago requeridas"),
+  acceptsCreditCard: z.boolean().default(false),
+
+  paymentLink: z.preprocess(
+    (val) => (typeof val === "string" && val.trim() === "" ? null : val),
+    z.url("Debe ser una URL válida").nullable().optional(),
+  ),
+
   acceptsCash: z.boolean().default(false),
-  cashInstructions: z.string().optional(),
+  cashInstructions: emptyToNull,
 
   boardingPoints: z
     .array(
@@ -44,10 +43,10 @@ export const baseTourSchema = z.object({
       }),
     )
     .min(1, "Debes agregar al menos un punto de abordaje"),
-  brochureUrl: z.string().nullable().optional(),
+
+  brochureUrl: emptyToNull,
 });
 
-// 2. Refinamiento encapsulado
 function withPaymentRefinements<T extends z.ZodTypeAny>(schema: T) {
   return schema.superRefine((data: any, ctx) => {
     if (data.depositPerPerson > data.price) {
@@ -55,14 +54,6 @@ function withPaymentRefinements<T extends z.ZodTypeAny>(schema: T) {
         code: "custom",
         message: "El anticipo no puede ser mayor al precio total del tour",
         path: ["depositPerPerson"],
-      });
-    }
-
-    if (data.acceptsBankTransfer && (!data.bankDetails || data.bankDetails.trim().length < 15)) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Proporciona Banco, CLABE y Titular (min. 15 caracteres)",
-        path: ["bankDetails"],
       });
     }
 
@@ -88,7 +79,6 @@ export const assignVehicleBodySchema = z.object({
   vehicleId: z.uuid("El ID del vehículo debe ser un UUID válido"),
 });
 
-// 3. Esquemas finales exportados
 export const createTourBodySchema = withPaymentRefinements(baseTourSchema);
 export const updateTourBodySchema = withPaymentRefinements(baseTourSchema.partial()).extend({
   removeBrochure: z.boolean().optional(),
@@ -100,7 +90,6 @@ export const getToursQuerySchema = z.object({
   offset: z.coerce.number().min(0).default(0),
 });
 
-// Tipos de TypeScript inferidos
 export type AssignVehicleBody = z.infer<typeof assignVehicleBodySchema>;
 export type CreateTourBody = z.infer<typeof createTourBodySchema>;
 export type UpdateTourBody = z.infer<typeof updateTourBodySchema>;

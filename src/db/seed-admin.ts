@@ -6,8 +6,8 @@ async function seedAdmin() {
   console.log("🌱 Iniciando inyección de usuario administrador...");
 
   try {
-    const agencyId = "5ca05e3e-bb5a-4f0b-8b36-9bb3668924ce";
-    const email = "alfredo@brujitours.com";
+    const agencyId = "d7a2eddf-ea66-4848-887c-d3cdd2e40e0d";
+    const email = "jackie@brujitours.com";
     const plainTextPassword = "123456";
 
     // 1. Hashear la contraseña con un factor de costo seguro (10 o 12)
@@ -21,7 +21,7 @@ async function seedAdmin() {
         agencyId,
         email,
         passwordHash,
-        fullName: "Alfredo (Admin)",
+        fullName: "Jackie (Admin)",
         role: "ADMIN",
         isActive: true,
       })
