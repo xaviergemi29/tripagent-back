@@ -21,13 +21,23 @@ export class PaymentService {
       // 2. Lógica Financiera: Inversión de signo para Reembolsos
       const actualAmount = data.type === "REFUND" ? -Math.abs(data.amount) : Math.abs(data.amount);
 
+      const actualCollectedAmount = data.collectedAmount
+        ? data.type === "REFUND"
+          ? -Math.abs(data.collectedAmount)
+          : Math.abs(data.collectedAmount)
+        : null;
+
       // 3. Registrar el movimiento en el Libro Mayor (Append-Only)
       const [newPayment] = await tx
         .insert(payments)
         .values({
           agencyId,
           bookingId,
-          amount: actualAmount, // Guardamos el valor firmado (ej. 500 o -500)
+          amount: actualAmount,
+          currency: data.currency,
+          collectedAmount: actualCollectedAmount,
+          collectedCurrency: data.collectedCurrency || null,
+          exchangeRate: data.exchangeRate || null,
           method: data.method,
           type: data.type,
           referenceInfo: data.referenceInfo,
@@ -39,7 +49,6 @@ export class PaymentService {
 
       // 4. Calcular el nuevo total pagado delegando la suma a PostgreSQL
       // COALESCE evita que retorne null si por alguna extraña razón no hubiera registros
-
       const [paymentSumResult] = await tx
         .select({
           totalPaid: sql<number>`COALESCE(SUM(${payments.amount}), 0)::numeric`,
@@ -106,14 +115,24 @@ export class PaymentService {
       if (originalPayment.type !== "PAYMENT")
         throw new Error("Solo se pueden anular abonos directos");
 
-      // 2. Insertar la Transacción de Compensación
+      // 2. Transacción de compensación: Arrastramos todos los datos de conversión en negativo
       const [voidRecord] = await tx
         .insert(payments)
         .values({
           agencyId,
           bookingId,
           type: "REFUND",
+
           amount: -Math.abs(Number(originalPayment.amount)),
+          currency: originalPayment.currency,
+
+          // Propagamos la auditoría de caja en negativo para que la caja cierre a cero
+          collectedAmount: originalPayment.collectedAmount
+            ? -Math.abs(Number(originalPayment.collectedAmount))
+            : null,
+          collectedCurrency: originalPayment.collectedCurrency,
+          exchangeRate: originalPayment.exchangeRate,
+
           method: originalPayment.method,
           referenceInfo: `Anulación: ${reason} (Ref: ${originalPayment.id})`,
           createdByUserId,
@@ -128,7 +147,6 @@ export class PaymentService {
           totalPaid: sql<number>`COALESCE(SUM(${payments.amount}), 0)::numeric`,
         })
         .from(payments)
-        // 👈 FIX: Comparamos contra la llave foránea bookingId, no contra el id del pago
         .where(eq(payments.bookingId, bookingId));
 
       const newTotalPaid = Number(paymentSumResult?.totalPaid);

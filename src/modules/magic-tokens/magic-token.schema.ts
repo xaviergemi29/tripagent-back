@@ -31,3 +31,10 @@ export const tokenValidationResponseSchema = z.object({
     })
     .optional(),
 });
+
+export const lookupTravelerQuerySchema = z.object({
+  phone: z
+    .string()
+    .trim()
+    .regex(/^(\+)?\d{10}$/, "Ingresa un número válido"),
+});

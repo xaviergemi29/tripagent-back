@@ -77,6 +77,7 @@ function withPaymentRefinements<T extends z.ZodTypeAny>(schema: T) {
 
 export const assignVehicleBodySchema = z.object({
   vehicleId: z.uuid("El ID del vehículo debe ser un UUID válido"),
+  resetOrphans: z.boolean().optional().default(false),
 });
 
 export const createTourBodySchema = withPaymentRefinements(baseTourSchema);

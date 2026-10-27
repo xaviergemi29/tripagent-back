@@ -120,6 +120,34 @@
       "when": 1790825849179,
       "tag": "0016_minor_tomas",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790911783051,
+      "tag": "0017_funny_jack_murdock",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791225057352,
+      "tag": "0018_supreme_fabian_cortez",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791404693714,
+      "tag": "0019_colossal_satana",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791823741581,
+      "tag": "0020_sparkling_the_fury",
+      "breakpoints": true
     }
   ]
 }

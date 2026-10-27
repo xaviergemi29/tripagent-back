@@ -1,0 +1,1 @@
+ALTER TABLE "magic_tokens" RENAME COLUMN "max_uses" TO "number_passengers";

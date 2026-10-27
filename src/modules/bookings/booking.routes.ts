@@ -12,6 +12,24 @@ import { BookingService } from "./booking.service.js";
 export async function bookingRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
+  server.post(
+    "/public/register",
+    {
+      schema: { body: createBookingBodySchema },
+    },
+    async (request, reply) => {
+      try {
+        const booking = await BookingService.processGroupBooking(request.body);
+        if (!booking) {
+          return reply.status(400).send({ error: "Booking no procesado" });
+        }
+        return reply.status(201).send(booking);
+      } catch (error) {
+        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
+      }
+    },
+  );
+
   (server.post(
     "/",
     {
@@ -22,8 +40,7 @@ export async function bookingRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       try {
-        const { agencyId } = request.user;
-        const booking = await BookingService.processGroupBooking(request.body, agencyId);
+        const booking = await BookingService.processGroupBooking(request.body);
         if (!booking) {
           return reply.status(400).send({ error: "Booking no procesado" });
         }

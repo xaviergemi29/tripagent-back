@@ -1,7 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { MagicTokenService } from "./magic-token.service.js";
-import { tokenValidationResponseSchema, validateTokenParamsSchema } from "./magic-token.schema.js";
+import {
+  lookupTravelerQuerySchema,
+  tokenValidationResponseSchema,
+  validateTokenParamsSchema,
+} from "./magic-token.schema.js";
+import { TravelerService } from "../travelers/travelers.service.js";
 
 export async function magicTokensRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
@@ -39,6 +44,41 @@ export async function magicTokensRoutes(app: FastifyInstance) {
           isValid: false,
           error: { code: "NOT_FOUND", message: "Error interno del servidor" },
         });
+      }
+    },
+  );
+
+  server.get(
+    "/:token/lookup-traveler",
+    {
+      schema: {
+        params: validateTokenParamsSchema,
+        querystring: lookupTravelerQuerySchema,
+      },
+    },
+    async (request, reply) => {
+      try {
+        const { token } = request.params;
+        const { phone } = request.query;
+
+        const magicTokenData = await MagicTokenService.validate(token);
+        if (!magicTokenData || !magicTokenData.isValid) {
+          return reply.status(400).send({ error: "Token inválido o expirado" });
+        }
+
+        const traveler = await TravelerService.findSingleTravelerByPhone(
+          phone,
+          magicTokenData.meta.agencyId,
+        );
+
+        if (!traveler) {
+          return reply.status(404).send({ message: "No registrado" });
+        }
+
+        return reply.status(200).send(traveler);
+      } catch (error) {
+        app.log.error(error, "Error en lookup público de viajero");
+        return reply.status(500).send({ error: "Error interno" });
       }
     },
   );
