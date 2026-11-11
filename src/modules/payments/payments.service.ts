@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import type { CreatePaymentBody } from "./payments.schema.js";
 import { bookings, PAYMENT_STATUS, payments } from "../../db/schema.js";
+import { BookingService } from "../bookings/booking.service.js";
 
 export class PaymentService {
   static async registerPayment(
@@ -78,6 +79,9 @@ export class PaymentService {
           updatedAt: new Date().toISOString(),
         })
         .where(eq(bookings.id, bookingId));
+
+      // Regla del PM: al cubrir el anticipo (con formulario lleno) la reserva pasa a CONFIRMED.
+      await BookingService.syncConfirmationStatus(tx, bookingId);
 
       // Retornamos un resumen limpio y útil para actualizar el Frontend (Optimistic UI)
       return {
@@ -176,6 +180,9 @@ export class PaymentService {
           updatedAt: new Date().toISOString(),
         })
         .where(eq(bookings.id, bookingId));
+
+      // Si la anulación deja lo pagado por debajo del anticipo, la reserva vuelve a PENDING.
+      await BookingService.syncConfirmationStatus(tx, bookingId);
 
       return {
         voidRecord,

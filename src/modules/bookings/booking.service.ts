@@ -10,6 +10,14 @@ import {
   travelers,
 } from "../../db/schema.js";
 import nodeCrypto from "node:crypto";
+import {
+  deriveBookingStatus,
+  getExpectedGroupSize,
+  getRequiredDeposit,
+} from "../../shared/utils/booking-rules.util.js";
+
+/** Transacción de Drizzle (el `tx` que recibe el callback de `db.transaction`). */
+export type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 const generateSecureToken = (length = 32): string => {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -21,6 +29,41 @@ const generateSecureToken = (length = 32): string => {
 };
 
 export class BookingService {
+  /**
+   * Recalcula el estado derivado PENDING ⇄ CONFIRMED de una reserva (ver deriveBookingStatus).
+   * Debe llamarse dentro de la transacción, DESPUÉS de actualizar amountPaid, totalPrice o el
+   * tamaño del grupo (magic token), para que lea los valores ya modificados.
+   */
+  static async syncConfirmationStatus(tx: DbTransaction, bookingId: string) {
+    const booking = await tx.query.bookings.findFirst({
+      where: eq(bookings.id, bookingId),
+      columns: { status: true, amountPaid: true, totalPrice: true },
+      with: {
+        tour: { columns: { price: true, depositPerPerson: true } },
+        magicToken: { columns: { numberPassengers: true } },
+      },
+    });
+    if (!booking) return;
+
+    const groupSize = getExpectedGroupSize(
+      booking.magicToken?.numberPassengers,
+      Number(booking.totalPrice),
+      Number(booking.tour.price),
+    );
+    const newStatus = deriveBookingStatus(
+      booking.status,
+      Number(booking.amountPaid),
+      getRequiredDeposit(Number(booking.tour.depositPerPerson), groupSize),
+    );
+
+    if (newStatus !== booking.status) {
+      await tx
+        .update(bookings)
+        .set({ status: newStatus, updatedAt: new Date().toISOString() })
+        .where(eq(bookings.id, bookingId));
+    }
+  }
+
   static async processGroupBooking(data: CreateBookingBody) {
     const { token, ...payload } = data;
 
@@ -214,10 +257,13 @@ export class BookingService {
         .set({ currentUses: magicToken.currentUses + 1 })
         .where(eq(magicTokens.id, magicToken.id));
 
+      // El formulario quedó lleno: sale de AWAITING_REGISTRATION y el estado se deriva
+      // (CONFIRMED si ya cubría el anticipo, p. ej. pagó antes de registrarse).
       await tx
         .update(bookings)
         .set({ status: "PENDING" })
         .where(eq(bookings.id, existingBooking.id));
+      await BookingService.syncConfirmationStatus(tx, existingBooking.id);
 
       const companionNames: string[] =
         payload.companions?.map((c) => c.fullName.trim()).filter(Boolean) || [];
@@ -354,6 +400,7 @@ export class BookingService {
 
       // 7. Generar el Magic Link Token
       const rawToken = nodeCrypto.randomUUID().replace(/-/g, "");
+      // expiresAt es obligatorio en la BD, pero el enlace NO vence (decisión del PM): no se valida.
       const expires = new Date();
       expires.setHours(expires.getHours() + 48);
 
@@ -519,6 +566,9 @@ export class BookingService {
         })
         .where(eq(bookings.id, bookingId));
 
+      // Más lugares = mayor anticipo requerido: una reserva confirmada puede volver a PENDING.
+      await BookingService.syncConfirmationStatus(tx, bookingId);
+
       return {
         message: "Lugar agregado exitosamente al grupo.",
         newTotalPrice,
@@ -582,6 +632,9 @@ export class BookingService {
           updatedAt: new Date().toISOString(),
         })
         .where(eq(bookings.id, bookingId));
+
+      // Menos lugares = menor anticipo requerido: puede pasar a CONFIRMED.
+      await BookingService.syncConfirmationStatus(tx, bookingId);
 
       return { message: "Cupo pendiente liberado exitosamente", newTotalPrice, newPaymentStatus };
     });

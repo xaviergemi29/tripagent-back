@@ -32,6 +32,10 @@ export async function tourSeatsRoutes(app: FastifyInstance) {
         if (error instanceof Error && error.message.includes("no encontrado")) {
           return reply.status(404).send({ error: error.message });
         }
+        // Regla de negocio (anticipo no cubierto): conflicto, no error del servidor.
+        if (error instanceof Error && error.message.includes("anticipo requerido")) {
+          return reply.status(409).send({ error: error.message });
+        }
         if (error instanceof Error) return reply.status(500).send({ error: error?.message });
 
         return reply.status(500).send({ error: "Error interno del servidor" });
