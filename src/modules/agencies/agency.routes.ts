@@ -83,13 +83,10 @@ export async function agencyRoute(app: FastifyInstance) {
     },
   );
 
-  // NOTA DE ARQUITECTURA:
-  // Mantuve el GET /:id debajo por si en el futuro necesitas consultas públicas (ej. un cliente
-  // viendo el perfil de la agencia para pagar) o vistas de Súper-Admin.
-  // Si no tienes ese caso de uso actual, te sugiero borrarlo para reducir la superficie de ataque.
   server.get(
     "/:id",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: getAgencybyIdParamSchema,
       },
@@ -97,6 +94,11 @@ export async function agencyRoute(app: FastifyInstance) {
     async (request, reply) => {
       try {
         const { id } = request.params;
+
+        if (id !== request.user.agencyId) {
+          return reply.status(403).send({ error: "No tienes acceso a esta agencia" });
+        }
+
         const agency = await Agency.findAgencyById(id);
         if (!agency) {
           return reply.status(404).send({

@@ -225,9 +225,9 @@ export async function tourRoutes(app: FastifyInstance) {
       try {
         const { agencyId } = request.user;
         const { tourId } = request.params;
-        const { vehicleId } = request.body;
+        const { vehicleId, resetOrphans } = request.body;
 
-        const tour = await TourService.assignVehicle(tourId, vehicleId, agencyId);
+        const tour = await TourService.assignVehicle(tourId, vehicleId, agencyId, resetOrphans);
 
         return reply.status(200).send({ data: tour });
       } catch (error) {

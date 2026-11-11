@@ -75,7 +75,13 @@ export async function magicTokensRoutes(app: FastifyInstance) {
           return reply.status(404).send({ message: "No registrado" });
         }
 
-        return reply.status(200).send(traveler);
+        return reply.status(200).send({
+          fullName: traveler.fullName,
+          email: traveler.email,
+          emergencyContactName: traveler.emergencyContactName,
+          emergencyContactPhone: traveler.emergencyContactPhone,
+          birthDate: traveler.birthDate,
+        });
       } catch (error) {
         app.log.error(error, "Error en lookup público de viajero");
         return reply.status(500).send({ error: "Error interno" });

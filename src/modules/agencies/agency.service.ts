@@ -20,7 +20,6 @@ export class Agency {
     return newAgency;
   }
 
-  // 🚀 REFACCIÓN: Recibe el ID directamente como string
   static async findAgencyById(agencyId: string) {
     const agency = await db.query.agencies.findFirst({
       where: eq(agencies.id, agencyId),

@@ -8,6 +8,20 @@ import type {
 } from "./travelers.schema.js";
 
 export class TravelerService {
+  static async findSingleTravelerByPhone(phone: string, agencyId: string) {
+    const traveler = db.query.travelers.findFirst({
+      where: and(
+        eq(travelers.whatsappPhone, phone),
+        eq(travelers.agencyId, agencyId),
+        isNull(travelers.deletedAt),
+      ),
+    });
+
+    if (!traveler) throw new Error("Viajero no encontrado");
+
+    return traveler;
+  }
+
   static async creteTraveler(body: CreateTravelerBody, agencyId: string) {
     const [createdTraveler] = await db
       .insert(travelers)
@@ -38,6 +52,7 @@ export class TravelerService {
       .select({
         ...getTableColumns(travelers),
 
+        // Mantenemos tu contador actual
         tripCount: sql<number>`(
           SELECT count(*)::int
           FROM ${bookingPassengers} bp
@@ -46,6 +61,54 @@ export class TravelerService {
             AND bp.status = 'ACTIVE'
             AND b.booking_status != 'CANCELLED'
         )`.mapWith(Number),
+
+        // NUEVO: Subquery para obtener el nombre del próximo tour
+        nextTourName: sql<string | null>`(
+          SELECT t.title
+          FROM ${bookingPassengers} bp
+          JOIN ${bookings} b ON b.id = bp.booking_id
+          JOIN ${tours} t ON t.id = b.tour_id
+          WHERE bp.traveler_id = "travelers"."id"
+            AND bp.status = 'ACTIVE'
+            AND b.booking_status != 'CANCELLED'
+            AND t.departure_date_time >= CURRENT_DATE
+          ORDER BY t.departure_date_time ASC
+          LIMIT 1
+        )`,
+
+        // NUEVO: Subquery para obtener la fecha del próximo tour
+        nextTourDate: sql<string | null>`(
+          SELECT t.departure_date_time
+          FROM ${bookingPassengers} bp
+          JOIN ${bookings} b ON b.id = bp.booking_id
+          JOIN ${tours} t ON t.id = b.tour_id
+          WHERE bp.traveler_id = "travelers"."id"
+            AND bp.status = 'ACTIVE'
+            AND b.booking_status != 'CANCELLED'
+            AND t.departure_date_time >= CURRENT_DATE
+          ORDER BY t.departure_date_time ASC
+          LIMIT 1
+        )`,
+
+        hasNationalTrips: sql<boolean>`EXISTS(
+          SELECT 1 FROM ${bookingPassengers} bp
+          JOIN ${bookings} b ON b.id = bp.booking_id
+          JOIN ${tours} t ON t.id = b.tour_id
+          WHERE bp.traveler_id = "travelers"."id"
+            AND bp.status = 'ACTIVE'
+            AND b.booking_status != 'CANCELLED'
+            AND t.destination_type = 'NATIONAL'
+        )`,
+
+        hasInternationalTrips: sql<boolean>`EXISTS(
+          SELECT 1 FROM ${bookingPassengers} bp
+          JOIN ${bookings} b ON b.id = bp.booking_id
+          JOIN ${tours} t ON t.id = b.tour_id
+          WHERE bp.traveler_id = "travelers"."id"
+            AND bp.status = 'ACTIVE'
+            AND b.booking_status != 'CANCELLED'
+            AND t.destination_type = 'INTERNATIONAL'
+        )`,
       })
       .from(travelers)
       .where(whereClause)
@@ -148,6 +211,7 @@ export class TravelerService {
         amountPaid: bookings.amountPaid,
         tourTitle: tours.title,
         departureDateTime: tours.departureDateTime,
+        destinationType: tours.destinationType,
       })
       .from(bookingPassengers)
       .innerJoin(bookings, eq(bookingPassengers.bookingId, bookings.id))

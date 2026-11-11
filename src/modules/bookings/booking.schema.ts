@@ -2,13 +2,15 @@ import { z } from "zod";
 import { baseTravelerSchema } from "../travelers/travelers.schema.js";
 import { PASSENGER_TYPE } from "../../db/schema.js";
 
+const emptyToUndefined = z
+  .union([z.string(), z.literal("")])
+  .optional()
+  .transform((val) => (!val || val.trim() === "" ? undefined : val.trim()));
+
 export const mainClientSchema = baseTravelerSchema.extend({
   whatsappPhone: z.string().regex(/^(\+)?\d{10}$/, "Debe ser un WhatsApp válido"),
   email: z.email("Correo electrónico inválido").trim(),
-  birthDate: z
-    .union([z.iso.date("Formato YYYY-MM-DD"), z.literal("")])
-    .optional()
-    .transform((e) => (e === "" ? undefined : e)),
+  birthDate: emptyToUndefined,
   boardingPoint: z.string().min(1, "Debes seleccionar en qué punto subirás al autobús"),
 });
 
@@ -16,16 +18,9 @@ const companionSchema = baseTravelerSchema
   .extend({
     id: z.uuid("ID inválido").optional(),
     passengerType: z.enum(["ADULT", "CHILD"]).default("ADULT"),
-    whatsappPhone: z
-      .string()
-      .regex(/^(\+)?\d{10}$/, "Inválido")
-      .optional()
-      .or(z.literal("")),
-    email: z.email("Inválido").optional().or(z.literal("")),
-    birthDate: z
-      .union([z.iso.date("Formato YYYY-MM-DD"), z.literal("")])
-      .optional()
-      .transform((e) => (e === "" ? undefined : e)),
+    whatsappPhone: emptyToUndefined,
+    email: emptyToUndefined,
+    birthDate: emptyToUndefined,
     boardingPoint: z.string().min(1, "Debes seleccionar en qué punto subirás al autobús"),
   })
   .superRefine((data, ctx) => {
@@ -35,6 +30,13 @@ const companionSchema = baseTravelerSchema
           code: "custom",
           path: ["whatsappPhone"],
           message: "El WhatsApp es obligatorio para adultos",
+        });
+      }
+      if (!data.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["email"],
+          message: "El correo electrónico es obligatorio para adultos",
         });
       }
     }
@@ -65,10 +67,7 @@ export const newReservationBookingSchema = z.object({
 });
 
 export const tourByIdParamsSchema = z.object({
-  id: z.uuid({
-    version: "v4",
-    message: "El ID del tour debe ser un UUID válido",
-  }),
+  id: z.uuid("El ID del tour debe ser un UUID válido"),
 });
 
 export const cancelBookingParamsSchema = z.object({
@@ -76,13 +75,26 @@ export const cancelBookingParamsSchema = z.object({
 });
 
 export const cancelBookingBodySchema = z.object({
-  // Permite al operador decidir qué hacer con el dinero retenido
   penaltyPercentage: z.number().min(0).max(100).default(0),
 });
 
+export const addPassengerToBookingBody = z.object({
+  tourId: z.uuid("ID de tour inválido"),
+});
+
+export const bookingByIdParamsSchema = z.object({
+  bookingId: z.uuid("ID de la reserva inválido"),
+});
+
+export const cancelFullBookingBodySchema = z.object({
+  penaltyAmount: z.number().min(0, "La penalización no puede ser un valor negativo").default(0),
+});
+
+export type CancelFullBookingBody = z.infer<typeof cancelFullBookingBodySchema>;
 export type CancelBookingParams = z.infer<typeof cancelBookingParamsSchema>;
 export type CancelBookingBody = z.infer<typeof cancelBookingBodySchema>;
-
+export type AddPassengerToBookingBody = z.infer<typeof addPassengerToBookingBody>;
+export type BookingByIdParamsSchema = z.infer<typeof bookingByIdParamsSchema>;
 export type CreateBookingBody = z.infer<typeof createBookingBodySchema>;
 export type RegisterGroupBody = z.infer<typeof bookingGroupBodySchema>;
 export type CreateReservationBookingBody = z.infer<typeof newReservationBookingSchema>;

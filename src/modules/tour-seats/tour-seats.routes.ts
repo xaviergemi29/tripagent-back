@@ -14,6 +14,7 @@ export async function tourSeatsRoutes(app: FastifyInstance) {
   server.patch(
     "/:tourId/seats/:seatLabel",
     {
+      onRequest: [app.authenticate],
       schema: {
         body: updateSeatBodySchema,
         params: updateTourSeatsParamsSchema,
@@ -23,10 +24,14 @@ export async function tourSeatsRoutes(app: FastifyInstance) {
       try {
         const { tourId, seatLabel } = request.params;
         const { body } = request;
-        const result = await TourSeatsService.updateSeatStatus(tourId, seatLabel, body);
+        const { agencyId } = request.user;
+        const result = await TourSeatsService.updateSeatStatus(tourId, seatLabel, body, agencyId);
         return reply.status(200).send({ data: result });
       } catch (error) {
         app.log.error(error, "Error actualizando asiento");
+        if (error instanceof Error && error.message.includes("no encontrado")) {
+          return reply.status(404).send({ error: error.message });
+        }
         if (error instanceof Error) return reply.status(500).send({ error: error?.message });
 
         return reply.status(500).send({ error: "Error interno del servidor" });
@@ -37,6 +42,7 @@ export async function tourSeatsRoutes(app: FastifyInstance) {
   server.get(
     "/:tourId/seats",
     {
+      onRequest: [app.authenticate],
       schema: {
         params: getTourSeatsByIdParamSchema,
       },
@@ -44,10 +50,14 @@ export async function tourSeatsRoutes(app: FastifyInstance) {
     async (request, reply) => {
       try {
         const { tourId } = request.params;
-        const seats = await TourSeatsService.getTourSeats(tourId);
+        const { agencyId } = request.user;
+        const seats = await TourSeatsService.getTourSeats(tourId, agencyId);
         return reply.status(200).send({ data: seats });
       } catch (error) {
         app.log.error(error, "Error consultando asientos del tour");
+        if (error instanceof Error && error.message.includes("no encontrado")) {
+          return reply.status(404).send({ error: error.message });
+        }
         if (error instanceof Error) return reply.status(500).send({ error: error?.message });
         return reply.status(500).send({ error: "Error interno del servidor" });
       }
