@@ -8,6 +8,7 @@ import {
 } from "./agency.schema.js";
 import { Agency } from "./agency.service.js";
 import { AgencyBrandingService } from "./agency-branding.service.js";
+import { AgencySubscriptionService } from "./agency-subscription.service.js";
 import {
   ensureUploadDirs,
   hasFileSignature,
@@ -48,6 +49,17 @@ export async function agencyRoute(app: FastifyInstance) {
       return reply.status(200).send({ data: agency });
     },
   );
+
+  /**
+   * Suscripción (Configuración → Suscripción): estado, consumo de la prueba, métricas de uso y
+   * canales de pago de TripAgent (`SUBSCRIPTION_*`; `null` si no están configurados). Solo lectura:
+   * ningún PATCH de la agencia modifica `subscriptionStatus` ni `trialEndsAt`.
+   */
+  server.get("/subscription", { onRequest: [app.authenticate] }, async (request, reply) => {
+    const subscription = await AgencySubscriptionService.getSubscription(request.user.agencyId);
+    if (!subscription) return reply.status(404).send({ error: "Agencia no encontrada" });
+    return reply.status(200).send({ data: subscription });
+  });
 
   // Políticas generales de la agencia (se leen con GET /agencies; se imprimen en el PDF).
   server.patch(
