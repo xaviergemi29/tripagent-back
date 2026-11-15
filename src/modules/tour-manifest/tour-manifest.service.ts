@@ -1,15 +1,25 @@
-import { and, eq, isNull, ne, inArray } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { bookings, tours, bookingPassengers, travelers } from "../../db/schema.js";
+import { bookings, tours, bookingPassengers } from "../../db/schema.js";
+import { NotFoundError } from "../../shared/errors/domain-errors.js";
+import { findBoardingPoint, matchesBoardingPoint } from "../../shared/utils/boarding-point.util.js";
 
 export class TourManifestService {
   static async getTourManifest(agencyId: string, tourId: string) {
     // 1. Obtener el Tour con sus Puntos de Abordaje (JSONB)
     const tour = await db.query.tours.findFirst({
       where: and(eq(tours.id, tourId), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)),
+      columns: {
+        id: true,
+        title: true,
+        departureDateTime: true,
+        currency: true,
+        boardingPoints: true,
+      },
     });
 
-    if (!tour) throw new Error("Tour no encontrado");
+    // 404 (antes un 500): el tour no existe o es de otra agencia.
+    if (!tour) throw new NotFoundError("Tour no encontrado");
 
     // 2. Extraer Reservas Activas (Solo PAID o PARTIAL, ignorando PENDING sin pago y CANCELLED)
     const activeBookings = await db.query.bookings.findMany({
@@ -20,10 +30,23 @@ export class TourManifestService {
         ne(bookings.paymentStatus, "PENDING"), // Excluimos no pagados para el manifiesto de puerta
         isNull(bookings.deletedAt),
       ),
+      columns: { id: true, totalPrice: true, amountPaid: true },
       with: {
         passengers: {
           where: eq(bookingPassengers.status, "ACTIVE"),
-          with: { traveler: true },
+          columns: { isTitular: true, seatLabel: true, boardingPoint: true },
+          // Solo lo que imprime el manifiesto de abordaje.
+          with: {
+            traveler: {
+              columns: {
+                id: true,
+                fullName: true,
+                medicalNotes: true,
+                emergencyContactName: true,
+                emergencyContactPhone: true,
+              },
+            },
+          },
         },
       },
     });
@@ -72,21 +95,9 @@ export class TourManifestService {
     const boardingPointsConfig = tour.boardingPoints || [];
 
     const manifestByBoardingPoint = boardingPointsConfig.map((bp) => {
-      const pointPassengers = allPassengers.filter((p) => {
-        if (!p.boardingPoint) return false;
-
-        const normalizedStored = p.boardingPoint.trim().toLowerCase();
-        const normalizedId = bp.id.trim().toLowerCase();
-        const normalizedLocation = bp.location.trim().toLowerCase();
-
-        const expectedComposite = `${bp.location} (${bp.time})`.trim().toLowerCase();
-
-        return (
-          normalizedStored === normalizedId ||
-          normalizedStored === normalizedLocation ||
-          normalizedStored === expectedComposite // <- ¡El match exitoso sucederá aquí!
-        );
-      });
+      const pointPassengers = allPassengers.filter(
+        (p) => !!p.boardingPoint && matchesBoardingPoint(p.boardingPoint, bp),
+      );
 
       return {
         id: bp.id,
@@ -97,20 +108,10 @@ export class TourManifestService {
     });
 
     // 6. Capturar pasajeros huérfanos SOLO si realmente existen
-    const unassignedPassengers = allPassengers.filter((p) => {
-      if (!p.boardingPoint) return true;
-      const normalizedStored = p.boardingPoint.trim().toLowerCase();
-
-      // 🚀 Aplicamos la misma lógica tolerante para asegurar que no se dupliquen
-      return !boardingPointsConfig.some((bp) => {
-        const expectedComposite = `${bp.location} (${bp.time})`.trim().toLowerCase();
-        return (
-          normalizedStored === bp.id.trim().toLowerCase() ||
-          normalizedStored === bp.location.trim().toLowerCase() ||
-          normalizedStored === expectedComposite
-        );
-      });
-    });
+    // Misma lógica tolerante para asegurar que no se dupliquen
+    const unassignedPassengers = allPassengers.filter(
+      (p) => !findBoardingPoint(p.boardingPoint, boardingPointsConfig),
+    );
 
     // 🚀 FIX CRÍTICO: Solo agregamos la sección de "Sin asignar" si hay pasajeros reales en ella.
     // Si la lista está vacía, no generamos esta tabla fantasma en el PDF.
@@ -127,6 +128,7 @@ export class TourManifestService {
       tourId: tour.id,
       tourTitle: tour.title,
       departureDateTime: tour.departureDateTime,
+      currency: tour.currency,
       boardingPoints: manifestByBoardingPoint,
     };
   }

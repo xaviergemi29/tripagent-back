@@ -1,40 +1,118 @@
-import { db } from "./index.js";
-import { agencyUsers } from "./schema.js";
+import { db } from "../db/index.js";
+import { agencies, agencyUsers } from "../db/schema.js";
 import bcrypt from "bcryptjs";
+import { parseArgs } from "node:util";
 
-async function seedAdmin() {
-  console.log("🌱 Iniciando inyección de usuario administrador...");
+/**
+ * 🚀 Script CLI de Aprovisionamiento de Agencia (Tenant)
+ *
+ * Uso:
+ * npm run tenant:create -- \
+ *   --name="Bruji Tours" \
+ *   --email="contacto@brujitours.com" \
+ *   --phone="2281234567" \
+ *   --adminName="Jackie Admin" \
+ *   --adminPassword="PasswordSeguro123"
+ *
+ * El logotipo no se pasa aquí: la agencia lo sube como archivo desde Configuración
+ * (POST /api/agencies/logo → agencies.logoPath).
+ */
+async function provisionTenant() {
+  console.log("🌱 Iniciando aprovisionamiento del Tenant...");
+
+  // 1. Parseo estricto de argumentos de linea de comandos
+  const { values } = parseArgs({
+    options: {
+      name: { type: "string", short: "n" },
+      email: { type: "string", short: "e" },
+      phone: { type: "string", short: "t" },
+      adminName: { type: "string", short: "u" },
+      adminPassword: { type: "string", short: "p" },
+    },
+    strict: true,
+  });
+
+  const agencyName = values.name;
+  const agencyEmail = values.email;
+  const agencyPhone = values.phone;
+  const adminName = values.adminName || `${agencyName} Admin`;
+  const adminPassword = values.adminPassword;
+
+  // 2. Validación de presencia de parámetros obligatorios
+  if (!agencyName || !agencyEmail || !adminPassword) {
+    console.error(
+      "❌ Error: Faltan argumentos obligatorios.\n\n" +
+        "Parámetros requeridos:\n" +
+        '  --name="Nombre Agencia"\n' +
+        '  --email="email@agencia.com"\n' +
+        '  --adminPassword="Password123"\n\n' +
+        "Parámetros opcionales:\n" +
+        '  --phone="2281234567"\n' +
+        '  --adminName="Nombre Administrador"\n',
+    );
+    process.exit(1);
+  }
 
   try {
-    const agencyId = "d7a2eddf-ea66-4848-887c-d3cdd2e40e0d";
-    const email = "jackie@brujitours.com";
-    const plainTextPassword = "123456";
+    // 3. Transacción ACID Única
+    await db.transaction(async (tx) => {
+      // --- A. INSERCIÓN DE AGENCIA ---
+      const agencyRows = await tx
+        .insert(agencies)
+        .values({
+          name: agencyName,
+          email: agencyEmail.toLowerCase().trim(),
+          phone: agencyPhone || null,
+          subscriptionStatus: "trialing",
+          isActive: true,
+        })
+        .returning({ id: agencies.id, name: agencies.name });
 
-    // 1. Hashear la contraseña con un factor de costo seguro (10 o 12)
-    const salt = await bcrypt.genSalt(12);
-    const passwordHash = await bcrypt.hash(plainTextPassword, salt);
+      const newAgency = agencyRows[0];
+      if (!newAgency) {
+        throw new Error("Fallo al insertar el registro de la agencia en PostgreSQL.");
+      }
 
-    // 2. Insertar el usuario
-    const [newUser] = await db
-      .insert(agencyUsers)
-      .values({
-        agencyId,
-        email,
-        passwordHash,
-        fullName: "Jackie (Admin)",
-        role: "ADMIN",
-        isActive: true,
-      })
-      .returning({ id: agencyUsers.id, email: agencyUsers.email, role: agencyUsers.role });
+      // La tabla `agencies` no tiene slug: el script calculaba uno y lo imprimía como `undefined`.
+      console.log(`✅ Agencia creada: ${newAgency.name} (ID: ${newAgency.id})`);
 
-    console.log("✅ Usuario Admin creado exitosamente:");
-    console.table(newUser);
-    console.log(`🔑 Credenciales -> Email: ${email} | Pass: ${plainTextPassword}`);
+      // --- B. INSERCIÓN DE USUARIO ADMINISTRADOR ---
+      const salt = await bcrypt.genSalt(12);
+      const passwordHash = await bcrypt.hash(adminPassword, salt);
+
+      const userRows = await tx
+        .insert(agencyUsers)
+        .values({
+          agencyId: newAgency.id,
+          email: agencyEmail.toLowerCase().trim(),
+          passwordHash,
+          fullName: adminName,
+          role: "ADMIN",
+          isActive: true,
+        })
+        .returning({ id: agencyUsers.id, email: agencyUsers.email });
+
+      const newUser = userRows[0];
+      if (!newUser) {
+        throw new Error("Fallo al crear el usuario administrador inicial.");
+      }
+
+      console.log(`✅ Usuario Admin asociado: ${newUser.email}`);
+
+      // Vehículos: no se clonan presets. El catálogo global (`vehicle_templates`) está disponible
+      // para todas las agencias y la unidad de la agencia se crea al asignarla a su primer tour.
+    });
+
+    console.log("\n🚀 Tenant aprovisionado y listo para operar exitosamente.");
   } catch (error) {
-    console.error("❌ Error al inyectar el admin:", error);
+    console.error(
+      "\n❌ Error durante el aprovisionamiento. Transacción revertida (Rollback):",
+      error,
+    );
+    process.exit(1);
   } finally {
     process.exit(0);
   }
 }
 
-seedAdmin();
+provisionTenant();

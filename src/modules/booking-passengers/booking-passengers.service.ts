@@ -1,6 +1,8 @@
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { BookingService } from "../bookings/booking.service.js";
+import { BookingStatusService } from "../bookings/booking-status.service.js";
+import { lockBookingForUpdate } from "../bookings/booking-lock.util.js";
+import { BusinessRuleError, NotFoundError } from "../../shared/errors/domain-errors.js";
 import { bookings, bookingPassengers, PAYMENT_STATUS, magicTokens } from "../../db/schema.js";
 
 export class BookingPassengerService {
@@ -10,15 +12,19 @@ export class BookingPassengerService {
     penaltyAmount: number,
     agencyId: string,
   ) {
-    return await db.transaction(async (tx) => {
+    return db.transaction(async (tx) => {
+      // Candado: dos bajas simultáneas del mismo grupo no calculan el precio unitario con el mismo
+      // número de activos (ni pueden dejar el grupo sin pasajeros).
+      await lockBookingForUpdate(tx, bookingId, agencyId);
+
       // 1. Validar la reserva maestra
       const booking = await tx.query.bookings.findFirst({
         where: and(eq(bookings.id, bookingId), eq(bookings.agencyId, agencyId)),
       });
 
-      if (!booking) throw new Error("Reserva no encontrada");
+      if (!booking) throw new NotFoundError("Reserva no encontrada");
       if (booking.status === "CANCELLED")
-        throw new Error("La reserva ya está cancelada por completo");
+        throw new BusinessRuleError("La reserva ya está cancelada por completo");
 
       // 2. Verificar pasajero ACTIVO
       const targetPassenger = await tx.query.bookingPassengers.findFirst({
@@ -30,7 +36,7 @@ export class BookingPassengerService {
       });
 
       if (!targetPassenger) {
-        throw new Error("El pasajero no existe o ya fue cancelado");
+        throw new BusinessRuleError("El pasajero no existe o ya fue cancelado");
       }
 
       // 3. Obtener el grupo activo para las matemáticas
@@ -43,7 +49,9 @@ export class BookingPassengerService {
 
       const activeCount = activePassengers.length;
       if (activeCount <= 1) {
-        throw new Error("Es el último pasajero activo. Usa la función de Cancelación Total.");
+        throw new BusinessRuleError(
+          "Es el último pasajero activo. Usa la función de Cancelación Total.",
+        );
       }
 
       // 4. Matemáticas Financieras: El descuento
@@ -54,7 +62,7 @@ export class BookingPassengerService {
 
       // 🛡️ Validación Defensiva: No puedes penalizar por un monto mayor a lo que cuesta el boleto
       if (penaltyAmount > unitPrice) {
-        throw new Error(
+        throw new BusinessRuleError(
           `La penalización ($${penaltyAmount}) no puede superar el costo individual del asiento ($${unitPrice}).`,
         );
       }
@@ -98,7 +106,7 @@ export class BookingPassengerService {
         .where(eq(magicTokens.bookingId, bookingId));
 
       // Grupo más chico = menor anticipo requerido: el estado PENDING ⇄ CONFIRMED se recalcula.
-      await BookingService.syncConfirmationStatus(tx, bookingId);
+      await BookingStatusService.syncStatus(tx, bookingId);
 
       // 8. Handoff para el Frontend (UX)
       const isOverpaid = amountPaid > newTotalPrice;

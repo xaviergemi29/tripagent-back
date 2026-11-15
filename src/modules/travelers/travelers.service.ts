@@ -1,4 +1,4 @@
-import { ilike, or, count, desc, eq, and, isNull, ne, sql, getTableColumns } from "drizzle-orm";
+import { ilike, or, count, desc, eq, and, isNull, sql, getTableColumns } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { bookingPassengers, bookings, tours, travelers } from "../../db/schema.js";
 import type {
@@ -8,21 +8,29 @@ import type {
 } from "./travelers.schema.js";
 
 export class TravelerService {
+  /**
+   * Autocompletar público del Magic Link (`lookup-traveler`): solo los campos que la ruta devuelve.
+   * Nunca carga notas médicas. `undefined` si no existe. (Antes no esperaba la promesa, así que su
+   * `if (!traveler) throw …` nunca se cumplía.)
+   */
   static async findSingleTravelerByPhone(phone: string, agencyId: string) {
-    const traveler = db.query.travelers.findFirst({
+    return db.query.travelers.findFirst({
       where: and(
         eq(travelers.whatsappPhone, phone),
         eq(travelers.agencyId, agencyId),
         isNull(travelers.deletedAt),
       ),
+      columns: {
+        fullName: true,
+        email: true,
+        emergencyContactName: true,
+        emergencyContactPhone: true,
+        birthDate: true,
+      },
     });
-
-    if (!traveler) throw new Error("Viajero no encontrado");
-
-    return traveler;
   }
 
-  static async creteTraveler(body: CreateTravelerBody, agencyId: string) {
+  static async createTraveler(body: CreateTravelerBody, agencyId: string) {
     const [createdTraveler] = await db
       .insert(travelers)
       .values({ ...body, agencyId })
@@ -154,7 +162,7 @@ export class TravelerService {
   static async updateTraveler(id: string, params: UpdateTravelerBody, agencyId: string) {
     const [updatedTraveler] = await db
       .update(travelers)
-      .set({ ...params })
+      .set({ ...params, updatedAt: new Date().toISOString() })
       .where(
         and(eq(travelers.id, id), eq(travelers.agencyId, agencyId), isNull(travelers.deletedAt)),
       )
@@ -167,24 +175,9 @@ export class TravelerService {
       .update(travelers)
       .set({ deletedAt: new Date().toISOString() })
       .where(
-        and(
-          eq(travelers.id, id),
-          and(eq(travelers.agencyId, agencyId)),
-          isNull(travelers.deletedAt),
-        ),
+        and(eq(travelers.id, id), eq(travelers.agencyId, agencyId), isNull(travelers.deletedAt)),
       )
       .returning();
-
-    return travelerDeleted;
-  }
-
-  /**
-   * Elimina físicamente un viajero por su ID (UUID).
-   * Ejecuta una sola consulta SQL utilizando la cláusula RETURNING de PostgreSQL.
-   * Retorna la entidad eliminada o `undefined` si no existía.
-   */
-  static async deleteTraveler(id: string) {
-    const [travelerDeleted] = await db.delete(travelers).where(eq(travelers.id, id)).returning();
 
     return travelerDeleted;
   }
@@ -212,6 +205,7 @@ export class TravelerService {
         tourTitle: tours.title,
         departureDateTime: tours.departureDateTime,
         destinationType: tours.destinationType,
+        currency: tours.currency,
       })
       .from(bookingPassengers)
       .innerJoin(bookings, eq(bookingPassengers.bookingId, bookings.id))
@@ -220,7 +214,12 @@ export class TravelerService {
       .orderBy(desc(tours.departureDateTime));
 
     // 3. Procesamiento de Reglas de Negocio en memoria
+    // Suma total (solo para isHabitualCompanion y compatibilidad: mezcla divisas).
     let lifetimeValue = 0;
+    // LTV real, por divisa: los importes de tours en MXN y en USD no se suman entre sí.
+    const lifetimeValueByCurrency: Partial<
+      Record<(typeof passengerRecords)[number]["currency"], number>
+    > = {};
     let activeTripsCount = 0;
 
     const history = passengerRecords.map((record) => {
@@ -232,6 +231,8 @@ export class TravelerService {
         // El LTV solo suma si el viajero fue quien pagó (Titular)
         if (record.isTitular) {
           lifetimeValue += Number(record.amountPaid);
+          lifetimeValueByCurrency[record.currency] =
+            (lifetimeValueByCurrency[record.currency] ?? 0) + Number(record.amountPaid);
         }
       }
 
@@ -246,6 +247,7 @@ export class TravelerService {
       metrics: {
         totalTrips: activeTripsCount,
         lifetimeValue,
+        lifetimeValueByCurrency,
         isHabitualCompanion: lifetimeValue === 0 && activeTripsCount > 0,
       },
       history, // Mandamos la lista procesada en lugar del anidamiento de Drizzle

@@ -1,0 +1,1 @@
+ALTER TABLE "tours" ADD COLUMN "staff_capacity" integer DEFAULT 0 NOT NULL;

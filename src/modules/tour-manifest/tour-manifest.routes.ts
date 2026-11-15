@@ -1,28 +1,21 @@
 import type { FastifyInstance } from "fastify";
+import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { TourManifestService } from "./tour-manifest.service.js";
 import { getTourManifestByIdParamsSchema } from "./tour-manifest.schema.js";
 
+/** Manifiesto de abordaje. Prefijo: /api/manifest. 404 si el tour no es de la agencia. */
 export async function tourManifestRoutes(app: FastifyInstance) {
-  app.get(
-    "/:tourId/",
-    {
-      onRequest: [app.authenticate],
-      schema: {
-        params: getTourManifestByIdParamsSchema,
-      },
-    },
-    async (request, reply) => {
-      try {
-        const { tourId } = request.params as { tourId: string };
-        const { agencyId } = request.user;
-        const manifest = await TourManifestService.getTourManifest(agencyId, tourId);
+  const server = app.withTypeProvider<ZodTypeProvider>();
 
-        return reply.status(200).send({ data: manifest });
-      } catch (error) {
-        app.log.error(error, "Error generando manifiesto del tour");
-        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
-        return reply.status(500).send({ error: "Error interno del servidor" });
-      }
+  server.get(
+    "/:tourId/",
+    { onRequest: [app.authenticate], schema: { params: getTourManifestByIdParamsSchema } },
+    async (request, reply) => {
+      const manifest = await TourManifestService.getTourManifest(
+        request.user.agencyId,
+        request.params.tourId,
+      );
+      return reply.status(200).send({ data: manifest });
     },
   );
 }

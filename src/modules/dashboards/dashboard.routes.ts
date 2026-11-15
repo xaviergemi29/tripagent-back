@@ -3,30 +3,22 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { GetDashboardParamsSchema } from "./dashboard.schema.js";
 import { DashboardService } from "./dashboard.service.js";
 
+/**
+ * BFF del Centro de Control. Prefijo: /api/dashboards. Responde el objeto directo (sin `data`).
+ * 404 si el tour no existe o es de otra agencia (manejador global).
+ */
 export async function dashboardRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
   server.get(
     "/:id",
-    {
-      onRequest: [app.authenticate],
-      schema: {
-        params: GetDashboardParamsSchema,
-      },
-    },
+    { onRequest: [app.authenticate], schema: { params: GetDashboardParamsSchema } },
     async (request, reply) => {
-      try {
-        const { agencyId } = request.user;
-        const dashboardData = await DashboardService.getTourDashboard(agencyId, request.params.id);
-        return reply.status(200).send(dashboardData);
-      } catch (error) {
-        // ✅ 1. Loguear para el backend (esencial en Node.js)
-        app.log.error(error, "Error al obtener el dashboard");
-
-        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
-
-        return reply.status(500).send({ error: "Error interno del servidor" });
-      }
+      const dashboardData = await DashboardService.getTourDashboard(
+        request.user.agencyId,
+        request.params.id,
+      );
+      return reply.status(200).send(dashboardData);
     },
   );
 }

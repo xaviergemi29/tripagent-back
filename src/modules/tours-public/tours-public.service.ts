@@ -1,11 +1,18 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { tours } from "../../db/schema.js";
+import { BookingCapacityService } from "../bookings/booking-capacity.service.js";
+import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
+import { TOUR_TEMPORAL_STATUS } from "../../shared/constants/domain.constants.js";
 
+/**
+ * Folleto público (`/p/[id]`, sin sesión). Solo tours no borrados ni cancelados (el resto → 404) y
+ * una proyección explícita (lista blanca): sin datos bancarios ni ids internos de la agencia.
+ */
 export class TourBrochure {
   static async findTourBrochureById(tourId: string) {
-    return db.query.tours.findFirst({
-      where: and(eq(tours.id, tourId), isNull(tours.deletedAt), eq(tours.isActive, true)),
+    const tour = await db.query.tours.findFirst({
+      where: and(eq(tours.id, tourId), isNull(tours.deletedAt), isNull(tours.cancelledAt)),
       columns: {
         id: true,
         title: true,
@@ -17,21 +24,51 @@ export class TourBrochure {
         returnDate: true,
         brochureUrl: true,
         boardingPoints: true,
+        maxCapacity: true,
+        staffCapacity: true,
+        cancelledAt: true,
       },
       with: {
-        agency: { columns: { name: true, phone: true } },
+        agency: { columns: { name: true, phone: true, logoPath: true } },
       },
     });
-  }
+    if (!tour) return undefined;
 
-  static async updateBrochureUrl(id: string, brochureUrl: string, agencyId: string) {
-    const [updatedTour] = await db
-      .update(tours)
-      .set({ brochureUrl, updatedAt: new Date().toISOString() })
-      .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
-      .returning();
+    // Ocupación en vivo para el folleto (misma regla que el Centro de Control).
+    const availability = await BookingCapacityService.getAvailability(db, tour);
 
-    if (!updatedTour) throw new Error("Tour no encontrado o sin permisos");
-    return updatedTour;
+    // Proyección pública explícita: las columnas internas de capacidad no se exponen tal cual.
+    return {
+      id: tour.id,
+      title: tour.title,
+      currency: tour.currency,
+      transportModality: tour.transportModality,
+      price: tour.price,
+      depositPerPerson: tour.depositPerPerson,
+      departureDateTime: tour.departureDateTime,
+      returnDate: tour.returnDate,
+      brochureUrl: tour.brochureUrl,
+      boardingPoints: tour.boardingPoints,
+      // Solo datos públicos de la agencia: nombre, teléfono y ruta del logotipo (archivo en /public).
+      agency: {
+        name: tour.agency.name,
+        phone: tour.agency.phone,
+        logoPath: tour.agency.logoPath ?? null,
+      },
+      availability: {
+        sellableCapacity: availability.sellableCapacity,
+        occupiedSeats: availability.occupiedSeats,
+        availableSeats: availability.availableSeats,
+        isBookable:
+          availability.availableSeats > 0 &&
+          getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt) ===
+            TOUR_TEMPORAL_STATUS.UPCOMING,
+        // Decisión del PM (2026-11-13): un tour EN CURSO o FINALIZADO ya cerró su logística; el
+        // folleto lo muestra como "Finalizado" (y no "Agotado") y la pre-reserva responde 409.
+        hasDeparted:
+          getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt) !==
+          TOUR_TEMPORAL_STATUS.UPCOMING,
+      },
+    };
   }
 }

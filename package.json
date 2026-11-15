@@ -10,8 +10,11 @@
     "db:push": "drizzle-kit push --config=drizzle.config.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "test": "node --import tsx --import ./test/setup.ts --test \"test/**/*.test.ts\"",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "tenant:create": "tsx src/db/seed-admin.ts",
+    "vehicle-templates:sync": "tsx src/db/sync-vehicle-templates.ts"
   },
   "keywords": [],
   "author": "",
@@ -19,7 +22,6 @@
   "type": "module",
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^26.1.2",
     "drizzle-kit": "^0.31.10",
     "eslint": "^10.10.0",
@@ -34,14 +36,14 @@
     "@fastify/cors": "^11.3.0",
     "@fastify/jwt": "^10.2.2",
     "@fastify/multipart": "^10.1.1",
+    "@fastify/rate-limit": "^11.2.1",
     "@fastify/static": "^10.1.4",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
-    "fastify": "^5.11.2",
-    "fastify-plugin": "^6.0.0",
+    "fastify": "^5.12.7",
     "fastify-type-provider-zod": "^7.0.0",
     "postgres": "^3.4.9",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   }
 }

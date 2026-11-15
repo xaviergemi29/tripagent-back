@@ -1,0 +1,331 @@
+import { after, afterEach, before, describe, it, mock } from "node:test";
+import assert from "node:assert/strict";
+import { db } from "../src/db/index.js";
+import { AGENCY_A, createTestApp, type TestApp } from "./helpers.js";
+
+const P1 = "a1a1a1a1-0000-4000-8000-000000000001";
+const P2 = "a1a1a1a1-0000-4000-8000-000000000002"; // abono anulado
+const P3 = "a1a1a1a1-0000-4000-8000-000000000003";
+
+/** Magic Link de Ana Torres: total $6,000; abonos $2,000 + $1,500 (anulado) + $2,500 = $4,500. */
+function magicTokenWith(status: string, paymentStatus: string, amountPaid: number) {
+  return {
+    token: "tok",
+    numberPassengers: 4,
+    tour: {
+      id: "tour-1",
+      title: "Cascadas de Cuetzalan",
+      departureDateTime: "2026-12-20",
+      price: 1500,
+      depositPerPerson: 500,
+      boardingPoints: [],
+      agency: {
+        id: AGENCY_A,
+        name: "Viajes Xalapa",
+        phone: "2281234567",
+        bankName: "Banco",
+        bankAccountHolder: "Titular",
+        clabeNumber: "012345678901234567",
+      },
+    },
+    booking: {
+      id: "booking-1",
+      status,
+      paymentStatus,
+      totalPrice: 6000,
+      amountPaid,
+      passengers: [
+        { isTitular: true, boardingPoint: "Plaza (06:00)", traveler: { fullName: "Ana Torres" } },
+      ],
+      payments: [
+        {
+          id: P1,
+          type: "PAYMENT",
+          amount: 2000,
+          method: "TRANSFER",
+          createdAt: "2026-11-01",
+          referenceInfo: null,
+        },
+        {
+          id: P2,
+          type: "PAYMENT",
+          amount: 1500,
+          method: "CASH",
+          createdAt: "2026-11-02",
+          referenceInfo: null,
+        },
+        {
+          id: P3,
+          type: "PAYMENT",
+          amount: 2500,
+          method: "CARD",
+          createdAt: "2026-11-03",
+          referenceInfo: null,
+        },
+        {
+          id: "refund-1",
+          type: "REFUND",
+          amount: -1500,
+          method: "CASH",
+          createdAt: "2026-11-04",
+          referenceInfo: `Anulación: Error de captura (Ref: ${P2})`,
+        },
+      ],
+    },
+  };
+}
+
+describe("Magic Link (portal del viajero): decisiones del PM", () => {
+  let app: TestApp;
+  before(async () => {
+    app = await createTestApp();
+  });
+  after(async () => {
+    await app.close();
+  });
+  afterEach(() => mock.restoreAll());
+
+  it("solo muestra abonos válidos: oculta la anulación y el abono anulado; la lista cuadra con el total", async () => {
+    mock.method(db.query.magicTokens, "findFirst", (async () =>
+      magicTokenWith("CONFIRMED", "PARTIAL", 4500)) as never);
+
+    const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+    const { data } = res.json();
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(
+      data.paymentHistory.map((p: { id: string }) => p.id),
+      [P1, P3],
+    );
+    const listed = data.paymentHistory.reduce(
+      (sum: number, p: { amount: number }) => sum + p.amount,
+      0,
+    );
+    assert.equal(listed, data.financials.amountPaid); // $4,500 = $4,500
+  });
+
+  it("expone bookingStatus para el distintivo de confirmación", async () => {
+    mock.method(db.query.magicTokens, "findFirst", (async () =>
+      magicTokenWith("PENDING", "PARTIAL", 50)) as never);
+
+    const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+
+    assert.equal(res.json().data.bookingStatus, "PENDING");
+  });
+
+  it("el enlace no vence: no existe validación de expiración", async () => {
+    const token = magicTokenWith("CONFIRMED", "PAID", 6000);
+    mock.method(db.query.magicTokens, "findFirst", (async () => ({
+      ...token,
+      expiresAt: "2020-01-01T00:00:00Z", // fecha guardada en el pasado
+    })) as never);
+
+    const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().flowState, "PAID");
+  });
+  it("pase de abordaje (PAID): expone asiento, punto con hora, estado del pasajero, moneda y dirección", async () => {
+    const token = magicTokenWith("CONFIRMED", "PAID", 6000);
+    token.tour.boardingPoints = [
+      { id: "bp-1", location: "Plaza", time: "06:00" },
+      { id: "bp-2", location: "Oxxo Tec", time: "05:30" },
+    ] as never;
+    Object.assign(token.tour, { currency: "MXN" });
+    Object.assign(token.tour.agency, { address: "Xalapa, Veracruz" });
+    token.booking.passengers = [
+      {
+        isTitular: true,
+        status: "ACTIVE",
+        seatLabel: "4",
+        boardingPoint: "Plaza (06:00)",
+        traveler: { fullName: "Ana Torres" },
+      },
+      {
+        isTitular: false,
+        status: "ACTIVE",
+        seatLabel: null,
+        boardingPoint: "bp-2",
+        traveler: { fullName: "Luis Torres" },
+      },
+      {
+        isTitular: false,
+        status: "CANCELLED",
+        seatLabel: null,
+        boardingPoint: "Desconocido",
+        traveler: { fullName: "Eva Torres" },
+      },
+    ] as never;
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+    const { flowState, data } = res.json();
+
+    assert.equal(flowState, "PAID");
+    assert.equal(data.tourInfo.currency, "MXN");
+    assert.equal(data.agency.address, "Xalapa, Veracruz");
+    assert.deepEqual(
+      data.passengers.map((p: { isTitular: boolean; status: string; seatLabel: string | null }) => [
+        p.isTitular,
+        p.status,
+        p.seatLabel,
+      ]),
+      [
+        [true, "ACTIVE", "4"],
+        [false, "ACTIVE", null],
+        [false, "CANCELLED", null],
+      ],
+    );
+    assert.deepEqual(data.passengers[0].boardingPointDetails, { location: "Plaza", time: "06:00" });
+    assert.deepEqual(data.passengers[1].boardingPointDetails, {
+      location: "Oxxo Tec",
+      time: "05:30",
+    });
+    assert.equal(data.passengers[2].boardingPointDetails, null);
+  });
+
+  it("comprobante PDF: la agencia trae logo, colores de marca, correo y tarjeta", async () => {
+    const token = magicTokenWith("CONFIRMED", "PARTIAL", 4500);
+    Object.assign(token.tour.agency, {
+      email: "hola@viajesxalapa.mx",
+      cardNumber: "4152313412345678",
+      logoPath: "/uploads/logos/agency-a-1.png",
+      branding: { primaryColor: "#059669", secondaryColor: "#047857", accentColor: null },
+    });
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+    const { agency } = res.json().data;
+
+    assert.equal(agency.email, "hola@viajesxalapa.mx");
+    assert.equal(agency.cardNumber, "4152313412345678");
+    assert.equal(agency.logoPath, "/uploads/logos/agency-a-1.png");
+    assert.equal(agency.primaryColor, "#059669");
+    assert.equal(agency.secondaryColor, "#047857");
+  });
+
+  it("instrucciones de pago (PENDING_PAYMENT): trae la tarjeta de la agencia junto a la CLABE (o null)", async () => {
+    const token = magicTokenWith("PENDING", "PENDING", 0);
+    Object.assign(token.tour.agency, { cardNumber: "4152313412345678" });
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+    const { flowState, data } = res.json();
+
+    assert.equal(flowState, "PENDING_PAYMENT");
+    assert.equal(data.booking.clabeNumber, "012345678901234567");
+    assert.equal(data.booking.cardNumber, "4152313412345678");
+
+    mock.restoreAll();
+    mock.method(db.query.magicTokens, "findFirst", (async () =>
+      magicTokenWith("PENDING", "PENDING", 0)) as never);
+    const withoutCard = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+    assert.equal(withoutCard.json().data.booking.cardNumber, null);
+  });
+
+  it("comprobante PDF: sin identidad visual guardada usa los colores por defecto y sin logo", async () => {
+    mock.method(db.query.magicTokens, "findFirst", (async () =>
+      magicTokenWith("CONFIRMED", "PAID", 6000)) as never);
+
+    const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+    const { agency } = res.json().data;
+
+    assert.equal(agency.logoPath, null);
+    assert.equal(agency.primaryColor, "#4f46e5");
+    assert.equal(agency.secondaryColor, "#4338ca");
+    assert.equal(agency.accentColor, null);
+  });
+
+  it("estado de cuenta PDF: trae fecha de regreso, lugares apartados y teléfono por pasajero", async () => {
+    const token = magicTokenWith("CONFIRMED", "PARTIAL", 4500);
+    Object.assign(token.tour, { returnDate: "2026-12-21" });
+    token.booking.passengers = [
+      {
+        isTitular: true,
+        status: "ACTIVE",
+        seatLabel: "4",
+        boardingPoint: null,
+        traveler: { fullName: "Ana Torres", whatsappPhone: "2281234567" },
+      },
+    ] as never;
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const { data } = (
+      await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" })
+    ).json();
+
+    assert.equal(data.tourInfo.returnDate, "2026-12-21");
+    assert.equal(data.groupSize, 4); // numberPassengers del token
+    assert.equal(data.passengers[0].phone, "2281234567");
+  });
+
+  it("trae las instrucciones post-pago del tour y las políticas generales de la agencia (o null)", async () => {
+    const token = magicTokenWith("CONFIRMED", "PARTIAL", 4500);
+    Object.assign(token.tour, {
+      postPaymentInstructions: "  Llevar botas de montaña.  ",
+    });
+    Object.assign(token.tour.agency, { policies: "El anticipo no es reembolsable." });
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const { data } = (
+      await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" })
+    ).json();
+    assert.equal(data.tourInfo.postPaymentInstructions, "Llevar botas de montaña.");
+    assert.equal("policies" in data.tourInfo, false);
+    assert.equal(data.agency.policies, "El anticipo no es reembolsable.");
+
+    mock.restoreAll();
+    mock.method(db.query.magicTokens, "findFirst", (async () =>
+      magicTokenWith("CONFIRMED", "PAID", 6000)) as never);
+    const paid = (
+      await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" })
+    ).json();
+    assert.equal(paid.data.tourInfo.postPaymentInstructions, null); // vacío o ausente → null
+    assert.equal(paid.data.agency.policies, null);
+  });
+
+  it("registro (PENDING_REGISTRATION): trae las políticas de la agencia recortadas (vacías → null)", async () => {
+    const token = magicTokenWith("AWAITING_REGISTRATION", "PENDING", 0);
+    Object.assign(token.tour.agency, {
+      policies: "  Anticipo no reembolsable.\n\nLlegar 15 min antes.  ",
+    });
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+    assert.equal(res.json().flowState, "PENDING_REGISTRATION");
+    assert.equal(
+      res.json().data.agencyPolicies,
+      "Anticipo no reembolsable.\n\nLlegar 15 min antes.",
+    );
+
+    mock.restoreAll();
+    const blank = magicTokenWith("AWAITING_REGISTRATION", "PENDING", 0);
+    Object.assign(blank.tour.agency, { policies: "   " });
+    mock.method(db.query.magicTokens, "findFirst", (async () => blank) as never);
+    const empty = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+    assert.equal(empty.json().data.agencyPolicies, null);
+  });
+
+  it("todas las vistas reciben la marca de la agencia en meta (incluida una reserva cancelada)", async () => {
+    for (const [status, paymentStatus, flowState] of [
+      ["CANCELLED", "PARTIAL", "CANCELLED"],
+      ["AWAITING_REGISTRATION", "PENDING", "PENDING_REGISTRATION"],
+      ["CONFIRMED", "PAID", "PAID"],
+    ] as const) {
+      const token = magicTokenWith(status, paymentStatus, 0);
+      Object.assign(token.tour.agency, { logoPath: "/uploads/logos/agency-a-1.png" });
+      mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+      const res = (
+        await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" })
+      ).json();
+      assert.equal(res.flowState, flowState);
+      assert.deepEqual(res.meta.agency, {
+        name: "Viajes Xalapa",
+        logoPath: "/uploads/logos/agency-a-1.png",
+        phone: "2281234567",
+      });
+      mock.restoreAll();
+    }
+  });
+});

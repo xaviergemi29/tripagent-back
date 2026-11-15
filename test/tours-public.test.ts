@@ -1,6 +1,7 @@
 import { after, afterEach, before, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { db } from "../src/db/index.js";
 import { AGENCY_A, createTestApp, rowMatches, type TestApp } from "./helpers.js";
 
@@ -8,13 +9,14 @@ const TOUR_ID = "33333333-3333-4333-8333-333333333333";
 const DELETED_TOUR_ID = "33333333-3333-4333-8333-333333333334";
 const INACTIVE_TOUR_ID = "33333333-3333-4333-8333-333333333335";
 const MISSING_TOUR_ID = "33333333-3333-4333-8333-333333333336";
+const DEPARTED_TOUR_ID = "33333333-3333-4333-8333-333333333337";
 
 // Filas "completas" tal como están en la base de datos.
 const agencyRow = {
   id: AGENCY_A,
   name: "Agencia Prueba",
   phone: "5512345678",
-  logoUrl: "https://cdn.test/logo.png",
+  logoPath: "/uploads/logos/agency-a-1.png",
   email: "privado@agencia.test",
   subscriptionStatus: "active",
   trialEndsAt: null,
@@ -45,7 +47,8 @@ const tourRow = {
   departureDateTime: "2026-12-20",
   returnDate: "2026-12-21",
   maxCapacity: 20,
-  isActive: true,
+  staffCapacity: 2,
+  cancelledAt: null,
   acceptsBankTransfer: true,
   acceptsCreditCard: false,
   paymentLink: null,
@@ -62,7 +65,8 @@ const tourRow = {
 const toursTable = [
   tourRow,
   { ...tourRow, id: DELETED_TOUR_ID, deletedAt: "2026-02-01T00:00:00Z" },
-  { ...tourRow, id: INACTIVE_TOUR_ID, isActive: false },
+  { ...tourRow, id: INACTIVE_TOUR_ID, cancelledAt: "2026-11-14T10:00:00.000Z" },
+  { ...tourRow, id: DEPARTED_TOUR_ID, departureDateTime: "2026-01-10", returnDate: "2026-01-11" },
 ];
 
 type Columns = Record<string, boolean> | undefined;
@@ -111,6 +115,17 @@ const SENSITIVE_VALUES = [
 
 const brochureUrl = (id: string) => `/api/tour-brochure/public/tours/${id}`;
 
+/** Reservas activas del tour (lo que ve BookingCapacityService): 4 + 3 lugares = 7 ocupados. */
+const activeBookings = [
+  { totalPrice: 6000, magicToken: { numberPassengers: 4 } },
+  { totalPrice: 4500, magicToken: null }, // sin token: 4500 / 1500 = 3
+];
+
+function mockBrochureDb(bookingsRows: unknown[] = activeBookings) {
+  mock.method(db.query.tours, "findFirst", fakeToursFindFirst as never);
+  mock.method(db.query.bookings, "findMany", (async () => bookingsRows) as never);
+}
+
 describe("GET /api/tour-brochure/public/tours/:id (folleto público)", () => {
   let app: TestApp;
 
@@ -123,7 +138,7 @@ describe("GET /api/tour-brochure/public/tours/:id (folleto público)", () => {
   afterEach(() => mock.restoreAll());
 
   it("es accesible sin autenticación y entrega lo que necesita el folleto", async () => {
-    mock.method(db.query.tours, "findFirst", fakeToursFindFirst as never);
+    mockBrochureDb();
 
     const res = await app.inject({ method: "GET", url: brochureUrl(TOUR_ID) });
 
@@ -132,11 +147,15 @@ describe("GET /api/tour-brochure/public/tours/:id (folleto público)", () => {
     for (const field of FIELDS_USED_BY_BROCHURE) {
       assert.ok(field in body, `falta el campo ${field}`);
     }
-    assert.deepEqual(body.agency, { name: agencyRow.name, phone: agencyRow.phone });
+    assert.deepEqual(body.agency, {
+      name: agencyRow.name,
+      phone: agencyRow.phone,
+      logoPath: agencyRow.logoPath,
+    });
   });
 
   it("no expone datos bancarios ni privados de la agencia", async () => {
-    mock.method(db.query.tours, "findFirst", fakeToursFindFirst as never);
+    mockBrochureDb();
 
     const res = await app.inject({ method: "GET", url: brochureUrl(TOUR_ID) });
 
@@ -150,18 +169,19 @@ describe("GET /api/tour-brochure/public/tours/:id (folleto público)", () => {
   });
 
   it("no expone identificadores internos ni configuración interna del tour", async () => {
-    mock.method(db.query.tours, "findFirst", fakeToursFindFirst as never);
+    mockBrochureDb();
 
     const res = await app.inject({ method: "GET", url: brochureUrl(TOUR_ID) });
     const body = res.json();
 
-    for (const key of ["agencyId", "vehicleId", "createdByUserId", "deletedAt"]) {
+    const internalKeys = ["agencyId", "vehicleId", "createdByUserId", "deletedAt"];
+    for (const key of [...internalKeys, "maxCapacity", "staffCapacity", "cancelledAt"]) {
       assert.ok(!(key in body), `${key} no debe ser público`);
     }
   });
 
   it("tour inexistente: 404", async () => {
-    mock.method(db.query.tours, "findFirst", fakeToursFindFirst as never);
+    mockBrochureDb();
 
     const res = await app.inject({ method: "GET", url: brochureUrl(MISSING_TOUR_ID) });
 
@@ -170,7 +190,7 @@ describe("GET /api/tour-brochure/public/tours/:id (folleto público)", () => {
   });
 
   it("tour eliminado (deletedAt): no disponible públicamente (404)", async () => {
-    mock.method(db.query.tours, "findFirst", fakeToursFindFirst as never);
+    mockBrochureDb();
 
     const res = await app.inject({ method: "GET", url: brochureUrl(DELETED_TOUR_ID) });
 
@@ -178,8 +198,8 @@ describe("GET /api/tour-brochure/public/tours/:id (folleto público)", () => {
     assert.ok(!res.body.includes(tourRow.title));
   });
 
-  it("tour inactivo (isActive=false): no disponible públicamente (404)", async () => {
-    mock.method(db.query.tours, "findFirst", fakeToursFindFirst as never);
+  it("tour cancelado por la agencia: no disponible públicamente (404)", async () => {
+    mockBrochureDb();
 
     const res = await app.inject({ method: "GET", url: brochureUrl(INACTIVE_TOUR_ID) });
 
@@ -195,5 +215,57 @@ describe("GET /api/tour-brochure/public/tours/:id (folleto público)", () => {
 
     assert.equal(res.statusCode, 500);
     assert.deepEqual(res.json(), { error: "Error interno del servidor" });
+  });
+
+  describe("disponibilidad en vivo (FOMO)", () => {
+    it("capacidad vendible = total − staff; ocupados = personas de todas las reservas activas", async () => {
+      mockBrochureDb();
+
+      const res = await app.inject({ method: "GET", url: brochureUrl(TOUR_ID) });
+
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.json().availability, {
+        sellableCapacity: 18, // 20 − 2 de staff
+        occupiedSeats: 7,
+        availableSeats: 11,
+        isBookable: true,
+        hasDeparted: false,
+      });
+    });
+
+    it("sin lugares: availableSeats 0 e isBookable false", async () => {
+      mockBrochureDb([{ totalPrice: 27000, magicToken: { numberPassengers: 18 } }]);
+
+      const res = await app.inject({ method: "GET", url: brochureUrl(TOUR_ID) });
+
+      assert.equal(res.json().availability.availableSeats, 0);
+      assert.equal(res.json().availability.isBookable, false);
+      assert.equal(res.json().availability.hasDeparted, false); // agotado, no finalizado
+    });
+
+    it("tour que ya salió (decisión del PM): hasDeparted true e isBookable false aunque haya lugares", async () => {
+      mockBrochureDb();
+
+      const res = await app.inject({ method: "GET", url: brochureUrl(DEPARTED_TOUR_ID) });
+
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.json().availability.availableSeats, 11);
+      assert.equal(res.json().availability.isBookable, false);
+      assert.equal(res.json().availability.hasDeparted, true);
+    });
+
+    it("la consulta de ocupación excluye canceladas y borradas, y es del tour pedido", async () => {
+      mock.method(db.query.tours, "findFirst", fakeToursFindFirst as never);
+      const findMany = mock.method(db.query.bookings, "findMany", (async () => []) as never);
+
+      await app.inject({ method: "GET", url: brochureUrl(TOUR_ID) });
+
+      const { where } = findMany.mock.calls[0]!.arguments[0] as { where: SQL };
+      const { sql, params } = new PgDialect().sqlToQuery(where);
+      assert.match(sql, /"booking_status" <> \$\d/);
+      assert.match(sql, /"deleted_at" is null/);
+      assert.ok(params.includes("CANCELLED"));
+      assert.ok(params.includes(TOUR_ID));
+    });
   });
 });

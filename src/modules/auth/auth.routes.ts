@@ -1,7 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { changePasswordBodySchema, loginBodySchema } from "./auth.schema.js";
-import { AuthService } from "./auth.service.js";
+import { AuthService, INVALID_CREDENTIALS_MESSAGE } from "./auth.service.js";
+import { RATE_LIMITS } from "../../shared/security/rate-limits.js";
+
+/** Vida de la sesión: el JWT y la cookie expiran a la vez (antes la cookie duraba 7 días). */
+const SESSION_TTL_SECONDS = 60 * 60 * 24;
 
 export async function authRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
@@ -9,6 +13,7 @@ export async function authRoutes(app: FastifyInstance) {
   server.post(
     "/login",
     {
+      config: { rateLimit: RATE_LIMITS.login },
       schema: {
         body: loginBodySchema,
       },
@@ -24,7 +29,7 @@ export async function authRoutes(app: FastifyInstance) {
             role: user.role,
           },
           {
-            expiresIn: "1d",
+            expiresIn: SESSION_TTL_SECONDS,
           },
         );
 
@@ -33,7 +38,7 @@ export async function authRoutes(app: FastifyInstance) {
           httpOnly: true,
           secure: process.env.NODE_ENV === "production",
           sameSite: "strict",
-          maxAge: 60 * 60 * 24 * 7,
+          maxAge: SESSION_TTL_SECONDS,
         });
 
         return reply.status(200).send({
@@ -44,9 +49,12 @@ export async function authRoutes(app: FastifyInstance) {
           },
         });
       } catch (error) {
+        if (error instanceof Error && error.message === INVALID_CREDENTIALS_MESSAGE) {
+          return reply.status(401).send({ error: INVALID_CREDENTIALS_MESSAGE });
+        }
+        // Cualquier otro fallo (p. ej. la base de datos) es un 500 sin detalles internos.
         app.log.error(error, "Error en el proceso de login");
-        const errorMessage = error instanceof Error ? error.message : "Error al iniciar sesión";
-        return reply.status(401).send({ error: errorMessage });
+        return reply.status(500).send({ error: "Error al iniciar sesión" });
       }
     },
   );
@@ -76,32 +84,22 @@ export async function authRoutes(app: FastifyInstance) {
     });
   });
 
-  // Añadir dentro de authRoutes
   server.post(
     "/change-password",
     {
+      config: { rateLimit: RATE_LIMITS.changePassword },
       preHandler: [app.authenticate],
       schema: {
         body: changePasswordBodySchema,
       },
     },
     async (request, reply) => {
-      try {
-        const userId = request.user.id;
-        await AuthService.changePassword(userId, request.body);
-
-        return reply.status(200).send({
-          success: true,
-          message: "Contraseña actualizada correctamente",
-        });
-      } catch (error) {
-        app.log.error(error, "Error al cambiar contraseña");
-        const errorMessage = error instanceof Error ? error.message : "Error interno del servidor";
-        // Si el error es por validación de negocio, devolvemos 400
-        const statusCode = errorMessage === "La contraseña actual es incorrecta" ? 400 : 500;
-
-        return reply.status(statusCode).send({ error: errorMessage });
-      }
+      // Contraseña actual incorrecta → BusinessRuleError (400) en el manejador global.
+      await AuthService.changePassword(request.user.id, request.body);
+      return reply.status(200).send({
+        success: true,
+        message: "Contraseña actualizada correctamente",
+      });
     },
   );
 }

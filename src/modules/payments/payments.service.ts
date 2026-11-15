@@ -2,7 +2,17 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import type { CreatePaymentBody } from "./payments.schema.js";
 import { bookings, PAYMENT_STATUS, payments } from "../../db/schema.js";
-import { BookingService } from "../bookings/booking.service.js";
+import {
+  BusinessRuleError,
+  ConflictError,
+  NotFoundError,
+} from "../../shared/errors/domain-errors.js";
+import { summarizeRefunds } from "../../shared/utils/refund.util.js";
+import { BookingStatusService } from "../bookings/booking-status.service.js";
+import { lockBookingForUpdate } from "../bookings/booking-lock.util.js";
+
+/** Liga una anulación con su abono: `voidPayment` escribe "(Ref: <id>)" en `referenceInfo`. */
+const voidReference = (paymentId: string) => `(Ref: ${paymentId})`;
 
 export class PaymentService {
   static async registerPayment(
@@ -11,13 +21,48 @@ export class PaymentService {
     agencyId: string,
     createdByUserId: string,
   ) {
-    return await db.transaction(async (tx) => {
+    return db.transaction(async (tx) => {
+      // 0. Candado de la reserva (serializa abonos y reembolsos simultáneos) + pertenencia.
+      await lockBookingForUpdate(tx, bookingId, agencyId);
+
       // 1. Validar existencia y propiedad de la reserva
       const booking = await tx.query.bookings.findFirst({
         where: and(eq(bookings.id, bookingId), eq(bookings.agencyId, agencyId)),
+        with: { tour: { columns: { cancelledAt: true } } },
       });
 
-      if (!booking) throw new Error("Reserva no encontrada o no pertenece a esta agencia");
+      if (!booking) throw new NotFoundError("Reserva no encontrada o no pertenece a esta agencia");
+
+      // Tour cancelado por la agencia (decisión del PM, 2026-11-14): Modo Auditoría con una
+      // excepción, los reembolsos. No entra dinero nuevo.
+      if (booking.tour?.cancelledAt && data.type !== "REFUND") {
+        throw new ConflictError(
+          "El tour fue cancelado por la agencia: solo se pueden registrar reembolsos.",
+        );
+      }
+
+      // Devoluciones en efectivo SOLO cuando la agencia cancela el tour (decisión del PM, 2026-11-14):
+      // si cancela el cliente, la agencia retiene lo abonado como penalización. Las correcciones de
+      // captura se hacen con "Anular" (voidPayment), no con un reembolso.
+      if (data.type === "REFUND" && !booking.tour?.cancelledAt) {
+        throw new ConflictError(
+          "Los reembolsos solo aplican cuando la agencia cancela el tour. Para corregir un abono mal capturado, anúlalo.",
+        );
+      }
+
+      // Un reembolso nunca devuelve más que el saldo a reembolsar (summarizeRefunds).
+      if (data.type === "REFUND") {
+        const maxRefund = summarizeRefunds({
+          amountPaid: booking.amountPaid,
+          totalPrice: booking.totalPrice,
+          payments: [],
+        }).refundableAmount;
+        if (Math.abs(data.amount) > maxRefund + 0.005) {
+          throw new BusinessRuleError(
+            `El reembolso ($${Math.abs(data.amount).toFixed(2)}) supera el saldo a reembolsar ($${maxRefund.toFixed(2)}).`,
+          );
+        }
+      }
 
       // 2. Lógica Financiera: Inversión de signo para Reembolsos
       const actualAmount = data.type === "REFUND" ? -Math.abs(data.amount) : Math.abs(data.amount);
@@ -63,10 +108,14 @@ export class PaymentService {
       // 5. Máquina de Estados Financiera (State Machine)
       let newPaymentStatus: (typeof PAYMENT_STATUS.enumValues)[number] = "PARTIAL";
 
-      if (newTotalPaid >= totalPrice) {
+      // Un reembolso que deja la reserva en $0 o menos es REFUNDED, aunque el total sea $0 (reserva
+      // cancelada sin penalización); antes caía en PAID porque 0 ≥ 0.
+      if (data.type === "REFUND" && newTotalPaid <= 0) {
+        newPaymentStatus = "REFUNDED";
+      } else if (newTotalPaid >= totalPrice) {
         newPaymentStatus = "PAID";
       } else if (newTotalPaid <= 0) {
-        newPaymentStatus = data.type === "REFUND" ? "REFUNDED" : "PENDING";
+        newPaymentStatus = "PENDING";
       }
 
       // 6. Sincronizar el estado en la tabla de la Reserva (Bookings)
@@ -81,7 +130,7 @@ export class PaymentService {
         .where(eq(bookings.id, bookingId));
 
       // Regla del PM: al cubrir el anticipo (con formulario lleno) la reserva pasa a CONFIRMED.
-      await BookingService.syncConfirmationStatus(tx, bookingId);
+      await BookingStatusService.syncStatus(tx, bookingId);
 
       // Retornamos un resumen limpio y útil para actualizar el Frontend (Optimistic UI)
       return {
@@ -103,7 +152,10 @@ export class PaymentService {
     agencyId: string,
     createdByUserId: string,
   ) {
-    return await db.transaction(async (tx) => {
+    return db.transaction(async (tx) => {
+      // 0. Candado de la reserva: dos anulaciones simultáneas del mismo abono se serializan.
+      await lockBookingForUpdate(tx, bookingId, agencyId);
+
       // 1. Buscar el pago original (Usando las llaves foráneas correctas de la tabla payments)
       const originalPayment = await tx.query.payments.findFirst({
         where: and(
@@ -113,11 +165,27 @@ export class PaymentService {
         ),
       });
 
-      if (!originalPayment) throw new Error("El abono no existe o no pertenece a esta reserva");
+      if (!originalPayment) {
+        throw new NotFoundError("El abono no existe o no pertenece a esta reserva");
+      }
 
       // 🛡️ Regla de Negocio: No puedes anular un reembolso/anulación
-      if (originalPayment.type !== "PAYMENT")
-        throw new Error("Solo se pueden anular abonos directos");
+      if (originalPayment.type !== "PAYMENT") {
+        throw new BusinessRuleError("Solo se pueden anular abonos directos");
+      }
+
+      // Un abono se anula una sola vez (antes una segunda anulación restaba el monto otra vez y
+      // dejaba `amountPaid` por debajo de lo realmente cobrado).
+      const ledger = await tx.query.payments.findMany({
+        where: eq(payments.bookingId, bookingId),
+        columns: { type: true, referenceInfo: true },
+      });
+      const alreadyVoided = ledger.some(
+        (entry) =>
+          entry.type === "REFUND" &&
+          (entry.referenceInfo ?? "").includes(voidReference(originalPayment.id)),
+      );
+      if (alreadyVoided) throw new ConflictError("Este abono ya fue anulado.");
 
       // 2. Transacción de compensación: Arrastramos todos los datos de conversión en negativo
       const [voidRecord] = await tx
@@ -138,7 +206,7 @@ export class PaymentService {
           exchangeRate: originalPayment.exchangeRate,
 
           method: originalPayment.method,
-          referenceInfo: `Anulación: ${reason} (Ref: ${originalPayment.id})`,
+          referenceInfo: `Anulación: ${reason} ${voidReference(originalPayment.id)}`,
           createdByUserId,
         })
         .returning();
@@ -182,7 +250,7 @@ export class PaymentService {
         .where(eq(bookings.id, bookingId));
 
       // Si la anulación deja lo pagado por debajo del anticipo, la reserva vuelve a PENDING.
-      await BookingService.syncConfirmationStatus(tx, bookingId);
+      await BookingStatusService.syncStatus(tx, bookingId);
 
       return {
         voidRecord,

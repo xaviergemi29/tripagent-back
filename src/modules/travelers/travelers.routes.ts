@@ -8,179 +8,116 @@ import {
   updateTravelerBodySchema,
 } from "./travelers.schema.js";
 
+const pgCode = (error: unknown): string | undefined =>
+  error instanceof Error && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
+
+const DUPLICATE_WHATSAPP = "Ya existe un viajero registrado con ese WhatsApp";
+
+/** CRM de viajeros de la agencia de la sesión. Prefijo: /api/travelers. */
 export async function travelerRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
-  // 1. GET /
   server.get(
     "/",
-    {
-      onRequest: [app.authenticate],
-      schema: {
-        querystring: getTravelersQuerySchema,
-      },
-    },
+    { onRequest: [app.authenticate], schema: { querystring: getTravelersQuerySchema } },
     async (request, reply) => {
-      try {
-        const { agencyId } = request.user;
-        const result = await TravelerService.findTravelers(request.query, agencyId);
-        return reply.status(200).send(result);
-      } catch (error) {
-        app.log.error(error, "Error al consultar viajeros");
-        return reply.status(500).send({ error: "Error interno del servidor" });
-      }
+      const result = await TravelerService.findTravelers(request.query, request.user.agencyId);
+      return reply.status(200).send(result);
     },
   );
 
-  // 2. GET /:id
   server.get(
     "/:travelerId",
-    {
-      onRequest: [app.authenticate],
-      schema: {
-        params: getTravelerByIdParamsSchema,
-      },
-    },
+    { onRequest: [app.authenticate], schema: { params: getTravelerByIdParamsSchema } },
     async (request, reply) => {
-      try {
-        const { travelerId } = request.params;
-        const { agencyId } = request.user;
-        const traveler = await TravelerService.findTravelerById(travelerId, agencyId);
-        if (!traveler) {
-          return reply.status(404).send({
-            error: "Viajero no encontrado",
-          });
-        }
-        return reply.status(200).send({ data: traveler });
-      } catch (error) {
-        app.log.error(error, "Error al consultar viajero por ID");
-        return reply.status(500).send({ error: "Error interno del servidor" });
-      }
+      const traveler = await TravelerService.findTravelerById(
+        request.params.travelerId,
+        request.user.agencyId,
+      );
+      if (!traveler) return reply.status(404).send({ error: "Viajero no encontrado" });
+      return reply.status(200).send({ data: traveler });
     },
   );
 
   server.get(
     "/:travelerId/history",
-    {
-      onRequest: [app.authenticate],
-      schema: {
-        params: getTravelerByIdParamsSchema,
-      },
-    },
+    { onRequest: [app.authenticate], schema: { params: getTravelerByIdParamsSchema } },
     async (request, reply) => {
-      try {
-        const { agencyId } = request.user;
-        const history = await TravelerService.getTravelerHistory(
-          request.params.travelerId,
-          agencyId,
-        );
-        if (!history) return reply.status(400).send({ error: "Viajeor no encontrado" });
-        return reply.status(200).send(history);
-      } catch (error) {
-        app.log.error(error, "Error al consultar historial del viajero");
-        return reply.status(500).send({ error: "Error interno" });
-      }
+      const history = await TravelerService.getTravelerHistory(
+        request.params.travelerId,
+        request.user.agencyId,
+      );
+      // 404 (antes 400 con el texto "Viajeor no encontrado").
+      if (!history) return reply.status(404).send({ error: "Viajero no encontrado" });
+      return reply.status(200).send(history);
     },
   );
 
-  // 3. PATCH /:id
   server.patch(
     "/:travelerId",
     {
       onRequest: [app.authenticate],
-      schema: {
-        params: getTravelerByIdParamsSchema,
-        body: updateTravelerBodySchema,
-      },
+      schema: { params: getTravelerByIdParamsSchema, body: updateTravelerBodySchema },
     },
     async (request, reply) => {
       try {
-        const { travelerId } = request.params;
-        const { agencyId } = request.user;
-        const body = request.body;
-        const result = await TravelerService.updateTraveler(travelerId, body, agencyId);
-
-        if (!result) {
-          return reply.status(404).send({
-            error: "Viajero no encontrado",
-          });
-        }
-
+        const result = await TravelerService.updateTraveler(
+          request.params.travelerId,
+          request.body,
+          request.user.agencyId,
+        );
+        if (!result) return reply.status(404).send({ error: "Viajero no encontrado" });
         return reply.status(200).send({ data: result });
-      } catch (error: any) {
-        app.log.error(error, "Error al actualizar viajero");
-
-        if (error?.code === "23505") {
+      } catch (error) {
+        if (pgCode(error) === "23505") {
           return reply.status(409).send({
             error: "El correo electrónico o teléfono ya está registrado por otro viajero",
           });
         }
-        return reply.status(500).send({ error: "Error interno del servidor" });
+        throw error;
       }
     },
   );
 
-  // 4. DELETE /:id (Cambiado de 'app.delete' a 'server.delete')
+  // Borrado lógico (conserva el historial).
   server.delete(
     "/:travelerId",
-    {
-      onRequest: [app.authenticate],
-      schema: {
-        params: getTravelerByIdParamsSchema,
-      },
-    },
+    { onRequest: [app.authenticate], schema: { params: getTravelerByIdParamsSchema } },
     async (request, reply) => {
       try {
-        const { travelerId } = request.params;
-        const { agencyId } = request.user;
-        const result = await TravelerService.softDeleteTraveler(travelerId, agencyId);
-
-        if (!result) {
-          return reply.status(404).send({
-            error: "Viajero no encontrado",
-          });
-        }
-
-        return reply.status(200).send({
-          data: result,
-        });
-      } catch (error: any) {
-        app.log.error(error, "Error al eliminar viajero por ID");
-
-        if (error?.code === "23503") {
+        const result = await TravelerService.softDeleteTraveler(
+          request.params.travelerId,
+          request.user.agencyId,
+        );
+        if (!result) return reply.status(404).send({ error: "Viajero no encontrado" });
+        return reply.status(200).send({ data: result });
+      } catch (error) {
+        if (pgCode(error) === "23503") {
           return reply.status(409).send({
             error: "No se puede eliminar el viajero porque tiene registros o reservas asociadas",
           });
         }
-
-        return reply.status(500).send({ error: "Error interno del servidor" });
+        throw error;
       }
     },
   );
 
   server.post(
     "/",
-    {
-      onRequest: [app.authenticate],
-      schema: {
-        body: createTravelerBodySchema,
-      },
-    },
+    { onRequest: [app.authenticate], schema: { body: createTravelerBodySchema } },
     async (request, reply) => {
       try {
-        const { agencyId } = request.user;
-        const insertedTraveler = await TravelerService.creteTraveler(request.body, agencyId);
+        const insertedTraveler = await TravelerService.createTraveler(
+          request.body,
+          request.user.agencyId,
+        );
         return reply.status(201).send(insertedTraveler);
-      } catch (error: any) {
-        app.log.error(error, "Error al crear el viajero");
-
-        if (error?.code === "23505") {
-          return reply
-            .status(409)
-            .send({ error: "Ya existe un viajero registrado con ese título" });
-        }
-
-        return reply.status(500).send({ error: "Error interno del servidor" });
+      } catch (error) {
+        // Índice único (agencia, WhatsApp). Antes el mensaje hablaba de un "título".
+        if (pgCode(error) === "23505") return reply.status(409).send({ error: DUPLICATE_WHATSAPP });
+        throw error;
       }
     },
   );

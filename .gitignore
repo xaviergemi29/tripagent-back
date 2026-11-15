@@ -142,3 +142,11 @@ dist
 .svelte-kit
 
 # End of https://www.toptal.com/developers/gitignore/api/node
+
+# TripAgent: archivos que suben las agencias (folletos PDF y logotipos). Se crean en tiempo de
+# ejecución; no deben versionarse (datos de clientes). La carpeta la crea la API al arrancar.
+public/uploads/brochures/*
+public/uploads/logos/*
+
+# macOS
+.DS_Store

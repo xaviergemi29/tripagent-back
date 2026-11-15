@@ -2,11 +2,18 @@ import { and, eq, isNull, ne } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { bookings, TOUR_MODALITIES, tours } from "../../db/schema.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
+import { getVehicleCapacity } from "../../shared/utils/vehicle-layout.util.js";
 import {
   getExpectedGroupSize,
   getRequiredDeposit,
+  getSellableCapacity,
   isDepositCovered,
+  sumOccupiedSeats,
 } from "../../shared/utils/booking-rules.util.js";
+import { PASSENGER_ROLE } from "../../shared/constants/domain.constants.js";
+import { findBoardingPoint } from "../../shared/utils/boarding-point.util.js";
+import { summarizeRefunds } from "../../shared/utils/refund.util.js";
+import { NotFoundError } from "../../shared/errors/domain-errors.js";
 
 export class DashboardService {
   static async getTourDashboard(agencyId: string, tourId: string) {
@@ -15,11 +22,18 @@ export class DashboardService {
       where: and(eq(tours.id, tourId), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)),
       with: {
         vehicle: true,
-        agency: true,
+        // Solo el nombre: antes se cargaba la agencia completa (datos bancarios) sin usarla.
+        agency: { columns: { name: true } },
       },
     });
 
-    if (!tour) throw new Error("Tour no encontrado");
+    // 404 (antes un 500): el tour no existe o es de otra agencia.
+    if (!tour) throw new NotFoundError("Tour no encontrado");
+
+    const toBoardingPointDetails = (stored: string | null) => {
+      const point = findBoardingPoint(stored, tour.boardingPoints ?? []);
+      return point ? { location: point.location, time: point.time } : null;
+    };
 
     // 2. Extraer reservas activas
     const activeBookings = await db.query.bookings.findMany({
@@ -30,22 +44,79 @@ export class DashboardService {
         isNull(bookings.deletedAt),
       ),
       with: {
-        traveler: true,
+        // Solo lo que muestra el Centro de Control (sin notas médicas ni contactos de emergencia).
         passengers: {
-          with: { traveler: true },
+          with: {
+            traveler: {
+              columns: {
+                id: true,
+                fullName: true,
+                whatsappPhone: true,
+                emergencyContactPhone: true,
+              },
+            },
+          },
         },
-        magicToken: true,
+        magicToken: { columns: { token: true, numberPassengers: true } },
         payments: {
           orderBy: (payments, { desc }) => [desc(payments.createdAt)],
-          with: { createdByUser: true },
+          // Solo el nombre de quien registró el abono: antes se cargaba la fila completa del
+          // usuario, incluido su hash de contraseña.
+          with: { createdByUser: { columns: { fullName: true } } },
         },
       },
     });
 
+    // 2.1 Reservas canceladas (para los reembolsos): solo si la AGENCIA canceló el tour (decisión del
+    // PM, 2026-11-14). Cuando el cliente cancela, la agencia retiene lo abonado como penalización y no
+    // hay devolución en efectivo. No cuentan para la ocupación ni para los KPI.
+    const cancelledBookings = !tour.cancelledAt
+      ? []
+      : await db.query.bookings.findMany({
+          where: and(
+            eq(bookings.agencyId, agencyId),
+            eq(bookings.tourId, tourId),
+            eq(bookings.status, "CANCELLED"),
+            isNull(bookings.deletedAt),
+          ),
+          with: {
+            traveler: { columns: { id: true, fullName: true, whatsappPhone: true } },
+            magicToken: { columns: { numberPassengers: true } },
+            payments: {
+              orderBy: (payments, { desc }) => [desc(payments.createdAt)],
+              with: { createdByUser: { columns: { fullName: true } } },
+            },
+          },
+        });
+
+    const isTourUSD = tour.currency === "USD";
+    type BookingPayment = (typeof activeBookings)[number]["payments"][number];
+    const toPaymentRecord = (payment: BookingPayment) => ({
+      id: payment.id,
+      amount: Number(payment.amount),
+      method: payment.method as "CASH" | "TRANSFER" | "CARD" | "OTHER",
+      type: payment.type as "PAYMENT" | "REFUND",
+      createdAt: payment.createdAt,
+      referenceInfo: payment.referenceInfo || null,
+      registeredBy: payment?.createdByUser?.fullName || null,
+      amountUSD: isTourUSD ? Number(payment.amount) : null,
+      amountMXN: payment.collectedCurrency === "MXN" ? Number(payment.collectedAmount) : null,
+      exchangeRate: payment.exchangeRate ? Number(payment.exchangeRate) : null,
+    });
+
     // 3. Inicialización de Métricas de Negocio
-    let soldSeats = 0; // Ocupación Real (Pagados/Apartados)
+    // Ocupación (regla 12): todas las reservas no canceladas, sin importar pago ni formulario.
+    const soldSeats = sumOccupiedSeats(
+      activeBookings.map((booking) => ({
+        totalPrice: Number(booking.totalPrice),
+        numberPassengers: booking.magicToken?.numberPassengers,
+      })),
+      Number(tour.price),
+    );
+    const sellableCapacity = getSellableCapacity(tour.maxCapacity, tour.staffCapacity);
     let collectedRevenue = 0;
-    let pendingValidationsCount = 0;
+    // Sin flujo de validación de pagos en el MVP: siempre 0 (el front lo espera en `metrics`).
+    const pendingValidationsCount = 0;
 
     // Logística: Solo contamos a los que tienen derecho a asiento (han pagado)
     let eligibleForSeatCount = 0;
@@ -67,8 +138,6 @@ export class DashboardService {
         totalPrice,
         baseTourPrice,
       );
-
-      soldSeats += expectedGroupSize;
 
       const passengersList = booking.passengers || [];
       const activePassengers = passengersList.filter((p) => p.status !== "CANCELLED");
@@ -100,40 +169,28 @@ export class DashboardService {
         .map((comp) => ({
           id: comp.traveler.id,
           bookingId: booking.id,
-          role: "COMPANION" as const,
+          role: PASSENGER_ROLE.COMPANION,
           fullName: comp.traveler.fullName,
           whatsapp: comp.traveler.whatsappPhone || "Sin teléfono",
           formStatus: !comp.traveler.emergencyContactPhone ? "PENDING" : "COMPLETED",
           seatLabel: comp.seatLabel || null,
           boardingPoint: comp.boardingPoint || null,
+          // Punto configurado del tour (ubicación y hora); misma regla que el manifiesto.
+          boardingPointDetails: toBoardingPointDetails(comp.boardingPoint),
         }));
 
       // 4.2 Mapeo de Pagos
       let totalEquivalentMXN = 0;
-      const isTourUSD = tour.currency === "USD";
 
       const mappedPayments = (booking.payments || []).map((payment) => {
-        const isCrossCurrency = payment.collectedCurrency === "MXN";
-        const amountMXN = isCrossCurrency ? Number(payment.collectedAmount) : null;
+        const record = toPaymentRecord(payment);
+        const amountMXN = record.amountMXN;
 
-        if (amountMXN && payment.type === "PAYMENT") {
-          totalEquivalentMXN += amountMXN;
-        } else if (amountMXN && payment.type === "REFUND") {
-          totalEquivalentMXN -= amountMXN;
-        }
+        // `collectedAmount` ya se guarda con signo (negativo en REFUND y anulaciones), así que se
+        // suma tal cual. Antes se restaba un monto negativo y el reembolso AUMENTABA el equivalente.
+        if (amountMXN) totalEquivalentMXN += amountMXN;
 
-        return {
-          id: payment.id,
-          amount: Number(payment.amount),
-          method: payment.method as "CASH" | "TRANSFER" | "CARD" | "OTHER",
-          type: payment.type as "PAYMENT" | "REFUND",
-          createdAt: payment.createdAt,
-          referenceInfo: payment.referenceInfo || null,
-          registeredBy: payment?.createdByUser?.fullName || null,
-          amountUSD: isTourUSD ? Number(payment.amount) : null,
-          amountMXN: amountMXN,
-          exchangeRate: payment.exchangeRate ? Number(payment.exchangeRate) : null,
-        };
+        return record;
       });
 
       const balance = Math.max(0, totalPrice - amountPaid);
@@ -142,7 +199,7 @@ export class DashboardService {
       groupedTravelers.push({
         id: titularRow.traveler.id,
         bookingId: booking.id,
-        role: "TITULAR" as const,
+        role: PASSENGER_ROLE.TITULAR,
         fullName: titularRow.traveler.fullName,
         whatsapp: titularRow.traveler.whatsappPhone || "Sin teléfono",
         // 🚀 Inyectamos el tamaño real del grupo esperado al Front-End
@@ -151,10 +208,14 @@ export class DashboardService {
         bookingStatus: booking.status,
         requiredDeposit,
         hasSeatRight,
+        // Fecha del apartado: el Centro de Control muestra cuánto lleva sin pago (revisión manual
+        // de las 48 h, regla 13; el sistema no cancela nada).
+        bookedAt: booking.createdAt,
 
         formStatus: isTitularFormPending ? "PENDING" : "COMPLETED",
         seatLabel: titularRow.seatLabel || null,
         boardingPoint: titularRow.boardingPoint || null,
+        boardingPointDetails: toBoardingPointDetails(titularRow.boardingPoint),
         magicToken: booking.magicToken?.token || null,
 
         paymentStatus: booking.paymentStatus as
@@ -168,6 +229,32 @@ export class DashboardService {
       });
     }
 
+    // 4.4 Reembolsos (decisión del PM, 2026-11-14): reservas canceladas con dinero abonado. El saldo
+    // a reembolsar es lo pagado neto menos la penalización retenida (summarizeRefunds, única regla).
+    const refunds = cancelledBookings
+      .map((booking) => ({
+        booking,
+        summary: summarizeRefunds({
+          amountPaid: booking.amountPaid,
+          totalPrice: booking.totalPrice,
+          payments: booking.payments,
+        }),
+      }))
+      .filter(({ summary }) => summary.paidAmount > 0)
+      .map(({ booking, summary }) => ({
+        bookingId: booking.id,
+        travelerId: booking.traveler.id,
+        fullName: booking.traveler.fullName,
+        whatsapp: booking.traveler.whatsappPhone || "Sin teléfono",
+        groupSize: getExpectedGroupSize(
+          booking.magicToken?.numberPassengers,
+          Number(booking.totalPrice),
+          baseTourPrice,
+        ),
+        ...summary,
+        payments: booking.payments.map(toPaymentRecord),
+      }));
+
     // 5. Retorno limpio respetando el schema Zod del Frontend
     return {
       id: tour.id,
@@ -176,16 +263,27 @@ export class DashboardService {
       requiresSeats: tour.transportModality === TOUR_MODALITIES.enumValues[0] ? true : false,
       currency: tour.currency as "MXN" | "USD",
       departureDateTime: tour.departureDateTime,
-      temporalStatus: getTourTemporalStatus(tour.departureDateTime, tour.isActive) as
-        "ACTIVO" | "FINALIZADO" | "CANCELADO",
+      returnDate: tour.returnDate ?? null,
+      // Indicaciones de logística del tour para el estado de cuenta PDF del operador.
+      postPaymentInstructions: tour.postPaymentInstructions?.trim() || null,
+      // PRÓXIMO | EN CURSO | FINALIZADO | CANCELADO (TOUR_TEMPORAL_STATUS), igual que el listado.
+      temporalStatus: getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt),
+      // Cancelación por la agencia (o null). La nota es interna: solo la ve el operador.
+      cancellation: tour.cancelledAt
+        ? {
+            cancelledAt: tour.cancelledAt,
+            reason: tour.cancellationReason,
+            note: tour.cancellationNote ?? null,
+          }
+        : null,
 
       metrics: {
         occupancy: {
-          max: tour.maxCapacity,
+          max: sellableCapacity,
           current: soldSeats,
         },
         revenue: {
-          projected: tour.maxCapacity * Number(tour.price),
+          projected: sellableCapacity * Number(tour.price),
           collected: collectedRevenue,
         },
         logistics: {
@@ -196,15 +294,22 @@ export class DashboardService {
         pendingValidations: pendingValidationsCount,
       },
 
+      // Lugares de staff: tope de asientos que el operador puede bloquear en el croquis.
+      staffCapacity: tour.staffCapacity,
+
       vehicle: tour.vehicle
         ? {
             id: tour.vehicle.id,
+            templateId: tour.vehicle.templateId,
             name: tour.vehicle.name,
-            layoutMap: tour.vehicle.layoutMap as (string | null)[][],
+            layoutMap: tour.vehicle.layoutMap,
+            // Operador excluido; `staff` = asientos reservados al staff por el croquis.
+            capacity: getVehicleCapacity(tour.vehicle.layoutMap),
           }
         : null,
 
       travelers: groupedTravelers,
+      refunds,
     };
   }
 }

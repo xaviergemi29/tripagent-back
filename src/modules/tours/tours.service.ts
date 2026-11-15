@@ -1,17 +1,56 @@
-import { ilike, or, count, desc, eq, and, isNull, isNotNull, inArray, ne } from "drizzle-orm";
+import {
+  ilike,
+  count,
+  desc,
+  eq,
+  and,
+  isNull,
+  isNotNull,
+  inArray,
+  ne,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 
-import { db } from "../../db/index.js";
-import { bookingPassengers, bookings, tours, vehicles } from "../../db/schema.js";
-import type { CreateTourBody, GetToursQuery, UpdateTourBody } from "./tours.schema.js";
+import { db, type DbExecutor } from "../../db/index.js";
+import {
+  bookingPassengers,
+  bookings,
+  payments,
+  tourBlockedSeats,
+  tours,
+  vehicles,
+} from "../../db/schema.js";
+import type {
+  CancelTourBody,
+  CreateTourBody,
+  GetToursQuery,
+  UpdateTourBody,
+} from "./tours.schema.js";
+import { BookingService } from "../bookings/booking.service.js";
+import { TOUR_TEMPORAL_STATUS } from "../../shared/constants/domain.constants.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
-import { unlink } from "node:fs/promises";
-import path from "node:path";
+import { getSellableCapacity, sumOccupiedSeats } from "../../shared/utils/booking-rules.util.js";
+import {
+  BusinessRuleError,
+  ConflictError,
+  NotFoundError,
+} from "../../shared/errors/domain-errors.js";
+import { getLayoutSeatLabels, getVehicleCapacity } from "../../shared/utils/vehicle-layout.util.js";
+import { VehicleTemplatesService } from "../vehicle-templates/vehicle-templates.service.js";
+import { BookingCapacityService } from "../bookings/booking-capacity.service.js";
+import { BookingStatusService } from "../bookings/booking-status.service.js";
+import { FROZEN_PRICING_ERROR, STAFF_CAPACITY_ERROR } from "./tours.schema.js";
+import { removeUpload } from "../../shared/storage/uploads.js";
+
+/** Prefijo de los archivos de folleto de un tour: un tour solo puede borrar SUS folletos. */
+export const brochureFilePrefix = (tourId: string) => `tour-${tourId}-`;
 
 export class TourService {
   static async findTours(query: GetToursQuery, agencyId: string) {
     const { limit, offset, search } = query;
 
-    const searchQueryCondition = search ? or(ilike(tours.title, `%${search}%`)) : undefined;
+    const searchQueryCondition = search ? ilike(tours.title, `%${search}%`) : undefined;
 
     const whereClause = and(
       eq(tours.agencyId, agencyId),
@@ -42,31 +81,34 @@ export class TourService {
           ne(bookings.status, "CANCELLED"), // Ignoramos estrictamente las canceladas
           isNull(bookings.deletedAt),
         ),
-        with: {
-          magicToken: true,
-        },
+        // Solo lo que usa el cálculo de ocupación (antes traía la reserva y el token completos).
+        columns: { tourId: true, totalPrice: true },
+        with: { magicToken: { columns: { numberPassengers: true } } },
       });
 
-      for (const booking of activeBookings) {
-        const matchingTour = fetchedTours.find((t) => t.id === booking.tourId);
-        const baseTourPrice = Number(matchingTour?.price) || 1;
-        const totalPrice = Number(booking.totalPrice) || 0;
-
-        // Misma heurística del Centro de Control
-        const expectedGroupSize = booking.magicToken?.numberPassengers
-          ? booking.magicToken.numberPassengers
-          : Math.max(1, Math.round(totalPrice / baseTourPrice));
-
-        const currentOccupancy = occupancyMap.get(booking.tourId) || 0;
-        occupancyMap.set(booking.tourId, currentOccupancy + expectedGroupSize);
+      // Misma regla de ocupación que el Centro de Control y la validación de cupo (regla 12).
+      for (const tour of fetchedTours) {
+        occupancyMap.set(
+          tour.id,
+          sumOccupiedSeats(
+            activeBookings
+              .filter((booking) => booking.tourId === tour.id)
+              .map((booking) => ({
+                totalPrice: Number(booking.totalPrice),
+                numberPassengers: booking.magicToken?.numberPassengers,
+              })),
+            Number(tour.price),
+          ),
+        );
       }
     }
 
     const enrichedTours = fetchedTours.map((tour) => {
       return {
         ...tour,
-        temporalStatus: getTourTemporalStatus(tour.departureDateTime, tour.isActive),
+        temporalStatus: getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt),
         currentOccupancy: occupancyMap.get(tour.id) || 0,
+        sellableCapacity: getSellableCapacity(tour.maxCapacity, tour.staffCapacity),
       };
     });
 
@@ -96,154 +138,376 @@ export class TourService {
    * Obtiene un tour por su UUID.
    */
   static async findTourById(id: string, agencyId: string) {
-    return await db.query.tours.findFirst({
+    const tour = await db.query.tours.findFirst({
       where: and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)),
     });
+    if (!tour) return undefined;
+
+    // `hasPayments`: la UI de edición congela moneda y precio (la API también lo valida).
+    return { ...tour, hasPayments: await TourService.hasRegisteredPayments(db, id) };
+  }
+
+  /** ¿Existe al menos un movimiento en `payments` (abono, reembolso o anulación) del tour? */
+  static async hasRegisteredPayments(executor: DbExecutor, tourId: string): Promise<boolean> {
+    const [row] = await executor
+      .select({ id: payments.id })
+      .from(payments)
+      .innerJoin(bookings, eq(payments.bookingId, bookings.id))
+      .where(eq(bookings.tourId, tourId))
+      .limit(1);
+    return !!row;
   }
 
   /**
-   * Actualiza parcialmente un tour existente.
+   * Actualiza parcialmente un tour existente, en una transacción con la fila del tour bloqueada.
+   * - Capacidad: si el PATCH trae solo uno de los dos campos, se valida contra el valor guardado.
+   * - Moneda y precio congelados (decisión del PM): con pagos registrados → ConflictError (409).
+   * - Si cambia el anticipo, se recalcula el estado de cada reserva activa (regla 11).
    */
   static async updateTour(id: string, data: UpdateTourBody, agencyId: string) {
     const { removeBrochure, ...restData } = data;
 
-    // Esto garantiza que TypeScript chille si intentas hacer update de una columna que no existe
-    const updatePayload = {
-      ...restData,
-      updatedAt: new Date().toISOString(),
-    };
+    const result = await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select({
+          maxCapacity: tours.maxCapacity,
+          staffCapacity: tours.staffCapacity,
+          price: tours.price,
+          currency: tours.currency,
+          depositPerPerson: tours.depositPerPerson,
+          brochureUrl: tours.brochureUrl,
+        })
+        .from(tours)
+        .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
+        .for("update");
+      if (!current) return undefined;
 
-    if (removeBrochure) {
-      updatePayload.brochureUrl = null;
-
-      const currentTour = await db.query.tours.findFirst({
-        where: and(eq(tours.id, id), eq(tours.agencyId, agencyId)),
-        columns: { brochureUrl: true },
-      });
-
-      if (currentTour?.brochureUrl) {
-        const fileName = currentTour.brochureUrl.split("/").pop();
-        if (fileName) {
-          const absolutePath = path.join(process.cwd(), "public", "uploads", "brochures", fileName);
-          await unlink(absolutePath).catch((err) =>
-            console.warn(`[FS] No se pudo borrar el folleto físico: ${err.message}`),
+      if (restData.maxCapacity !== undefined || restData.staffCapacity !== undefined) {
+        const maxCapacity = restData.maxCapacity ?? current.maxCapacity;
+        const staffCapacity = restData.staffCapacity ?? current.staffCapacity;
+        const sellableCapacity = getSellableCapacity(maxCapacity, staffCapacity);
+        if (sellableCapacity < 1) {
+          throw new BusinessRuleError(STAFF_CAPACITY_ERROR);
+        }
+        // Decisión del PM (2026-11-14): la capacidad vendible nunca queda por debajo de los
+        // lugares ya ocupados (regla 12); evita sobreventas lógicas. La fila del tour ya está
+        // bloqueada (FOR UPDATE), así que ninguna reserva nueva se cuela entre la lectura y el cambio.
+        const occupiedSeats = await BookingCapacityService.getOccupiedSeats(
+          tx,
+          id,
+          Number(current.price),
+        );
+        if (sellableCapacity < occupiedSeats) {
+          throw new ConflictError(
+            `No puedes dejar ${sellableCapacity} lugares a la venta: el tour ya tiene ${occupiedSeats} lugares ocupados. Ajusta la capacidad total o los lugares de staff.`,
           );
         }
       }
-    }
 
-    const [tourUpdated] = await db
-      .update(tours)
-      .set(updatePayload)
-      .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
-      .returning();
+      const changesCurrency =
+        restData.currency !== undefined && restData.currency !== current.currency;
+      const changesPrice =
+        restData.price !== undefined && Number(restData.price) !== Number(current.price);
+      if ((changesCurrency || changesPrice) && (await TourService.hasRegisteredPayments(tx, id))) {
+        throw new ConflictError(FROZEN_PRICING_ERROR);
+      }
 
-    return tourUpdated;
-  }
-
-  static async deleteTour(id: string) {
-    const [tourDeleted] = await db.delete(tours).where(eq(tours.id, id)).returning();
-
-    return tourDeleted;
-  }
-
-  static async softDeleteTour(id: string, agencyId: string) {
-    // Generamos la fecha actual en formato ISO string con zona horaria
-    const timestampNow = new Date().toISOString();
-
-    const [tourDeleted] = await db
-      .update(tours)
-      .set({ deletedAt: timestampNow })
-      .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
-      .returning();
-
-    return tourDeleted;
-  }
-
-  static async updateBrochureUrl(id: string, brochureUrl: string, agencyId: string) {
-    const [updatedTour] = await db
-      .update(tours)
-      .set({ brochureUrl, updatedAt: new Date().toISOString() })
-      .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
-      .returning();
-
-    if (!updatedTour) throw new Error("Tour no encontrado o sin permisos");
-    return updatedTour;
-  }
-
-  static async assignVehicle(
-    id: string,
-    vehicleId: string,
-    agencyId: string,
-    resetOrphans: boolean = false,
-  ) {
-    return await db.transaction(async (tx) => {
-      // 1. Asignamos el vehículo al tour (bloqueando el registro)
-      const [updatedTour] = await tx
+      const [tourUpdated] = await tx
         .update(tours)
         .set({
-          vehicleId,
+          ...restData,
+          ...(removeBrochure ? { brochureUrl: null } : {}),
           updatedAt: new Date().toISOString(),
         })
         .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
         .returning();
 
-      if (!updatedTour) {
-        throw new Error("Tour no encontrado o sin permisos");
-      }
-
-      // 2. Lógica condicional destructiva (Reset Orphans)
-      if (resetOrphans) {
-        // a. Obtener la capacidad del nuevo vehículo
-        const vehicle = await tx.query.vehicles.findFirst({
-          where: eq(vehicles.id, vehicleId),
-          columns: { layoutMap: true },
-        });
-
-        if (vehicle?.layoutMap) {
-          const layout = vehicle.layoutMap as (string | null)[][];
-          // Capacidad = total de celdas que no son nulas ni pasillos
-          const newCapacity = layout.flat().filter((cell) => cell && cell !== "AISLE").length;
-
-          // b. Obtener todos los pasajeros actuales del tour con un asiento asignado
-          // Utilizamos un inner join implícito de Drizzle relacional
-          const activeBookings = await tx.query.bookings.findMany({
-            where: and(eq(bookings.tourId, id), eq(bookings.agencyId, agencyId)),
-            with: {
-              passengers: {
-                where: isNotNull(bookingPassengers.seatLabel),
-                columns: { id: true, seatLabel: true },
-              },
-            },
-          });
-
-          // c. Evaluar en memoria cuáles asientos superan la nueva capacidad
-          const orphanPassengerIds: string[] = [];
-
-          for (const b of activeBookings) {
-            for (const p of b.passengers) {
-              const seatNum = Number(p.seatLabel);
-              // Si el asiento es un número válido y es mayor a la capacidad, es huérfano
-              if (!isNaN(seatNum) && seatNum > newCapacity) {
-                orphanPassengerIds.push(p.id);
-              }
-            }
-          }
-
-          // d. Liberar (Nullify) los asientos huérfanos de un solo golpe
-          if (orphanPassengerIds.length > 0) {
-            await tx
-              .update(bookingPassengers)
-              .set({
-                seatLabel: null,
-                updatedAt: new Date().toISOString(),
-              })
-              .where(inArray(bookingPassengers.id, orphanPassengerIds));
-          }
+      const changesDeposit =
+        restData.depositPerPerson !== undefined &&
+        Number(restData.depositPerPerson) !== Number(current.depositPerPerson);
+      if (changesDeposit) {
+        const activeBookings = await tx
+          .select({ id: bookings.id })
+          .from(bookings)
+          .where(
+            and(
+              eq(bookings.tourId, id),
+              ne(bookings.status, "CANCELLED"),
+              isNull(bookings.deletedAt),
+            ),
+          );
+        for (const booking of activeBookings) {
+          await BookingStatusService.syncStatus(tx, booking.id);
         }
       }
 
-      return updatedTour;
+      return { tourUpdated, previousBrochureUrl: current.brochureUrl };
+    });
+
+    if (!result) return undefined;
+
+    // El archivo físico se borra solo después de confirmar la transacción, y solo si es un folleto
+    // de ESTE tour (prefijo `tour-<id>-`).
+    if (removeBrochure && result.previousBrochureUrl) {
+      await removeUpload("brochures", result.previousBrochureUrl, brochureFilePrefix(id));
+    }
+
+    return result.tourUpdated;
+  }
+
+  /**
+   * Cancelación del tour por la agencia (decisión del PM, 2026-11-14): evento definitivo de fuerza
+   * mayor (clima, seguridad, cupo mínimo, otra causa). En una transacción con la fila del tour
+   * bloqueada:
+   * - guarda `cancelledAt`, el motivo y la nota (el tour pasa a CANCELADO: Modo Auditoría y fuera del
+   *   folleto);
+   * - cancela todas las reservas no canceladas con penalización $0 (`applyFullCancellation`: libera
+   *   asientos y deja todo lo abonado como saldo a reembolsar).
+   * Rechaza (409) un tour ya cancelado o FINALIZADO. Un tour EN CURSO sí se puede cancelar (p. ej.
+   * cierre carretero el día de salida).
+   */
+  static async cancelTour(id: string, body: CancelTourBody, agencyId: string) {
+    return db.transaction(async (tx) => {
+      const [tour] = await tx
+        .select({
+          id: tours.id,
+          departureDateTime: tours.departureDateTime,
+          cancelledAt: tours.cancelledAt,
+          currency: tours.currency,
+        })
+        .from(tours)
+        .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
+        .for("update");
+      if (!tour) return undefined;
+
+      if (tour.cancelledAt) {
+        throw new ConflictError("El tour ya fue cancelado.");
+      }
+      if (
+        getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt) ===
+        TOUR_TEMPORAL_STATUS.FINISHED
+      ) {
+        throw new ConflictError("No se puede cancelar un tour que ya finalizó.");
+      }
+
+      const now = new Date().toISOString();
+      await tx
+        .update(tours)
+        .set({
+          cancelledAt: now,
+          cancellationReason: body.reason,
+          cancellationNote: body.note ?? null,
+          updatedAt: now,
+        })
+        .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId)));
+
+      const activeBookings = await tx
+        .select({
+          id: bookings.id,
+          totalPrice: bookings.totalPrice,
+          amountPaid: bookings.amountPaid,
+          paymentStatus: bookings.paymentStatus,
+        })
+        .from(bookings)
+        .where(
+          and(
+            eq(bookings.tourId, id),
+            ne(bookings.status, "CANCELLED"),
+            isNull(bookings.deletedAt),
+          ),
+        );
+
+      let refundableTotal = 0;
+      for (const booking of activeBookings) {
+        // La agencia cancela: no hay penalización, se devuelve todo lo abonado.
+        const summary = await BookingService.applyFullCancellation(tx, booking, 0);
+        refundableTotal += summary.surplusAmount;
+      }
+
+      return {
+        tourId: id,
+        cancelledAt: now,
+        reason: body.reason,
+        cancelledBookings: activeBookings.length,
+        refundableTotal: Math.round(refundableTotal * 100) / 100,
+        currency: tour.currency,
+      };
+    });
+  }
+
+  /**
+   * Borrado lógico (decisión del PM): se rechaza (ConflictError → 409) si el tour tiene reservas
+   * no canceladas o dinero abonado (SUM(amountPaid) ≠ 0 en sus reservas no borradas). Primero
+   * hay que cancelar y reembolsar. La fila del tour se bloquea para que no entre una reserva
+   * mientras se valida.
+   */
+  static async softDeleteTour(id: string, agencyId: string) {
+    return db.transaction(async (tx) => {
+      const [tour] = await tx
+        .select({ id: tours.id, currency: tours.currency })
+        .from(tours)
+        .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
+        .for("update");
+      if (!tour) return undefined;
+
+      const [summary] = await tx
+        .select({
+          activeBookings: sql<number>`count(*) filter (where ${bookings.status} <> 'CANCELLED')`,
+          totalPaid: sql<string>`coalesce(sum(${bookings.amountPaid}), 0)`,
+        })
+        .from(bookings)
+        .where(and(eq(bookings.tourId, id), isNull(bookings.deletedAt)));
+
+      const activeBookings = Number(summary?.activeBookings ?? 0);
+      const totalPaid = Number(summary?.totalPaid ?? 0);
+
+      if (activeBookings > 0) {
+        throw new ConflictError(
+          `No se puede eliminar el tour: tiene ${activeBookings} reserva(s) activa(s). Cancélalas primero desde el Centro de Control.`,
+        );
+      }
+      if (totalPaid !== 0) {
+        throw new ConflictError(
+          `No se puede eliminar el tour: sus reservas conservan $${totalPaid.toLocaleString("es-MX")} ${tour.currency} abonados. Reembolsa los abonos antes de eliminarlo.`,
+        );
+      }
+
+      const [tourDeleted] = await tx
+        .update(tours)
+        .set({ deletedAt: new Date().toISOString() })
+        .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
+        .returning();
+
+      return tourDeleted;
+    });
+  }
+
+  /** ¿El tour existe, no está borrado y es de la agencia? (antes de escribir archivos en disco). */
+  static async existsForAgency(id: string, agencyId: string): Promise<boolean> {
+    const tour = await db.query.tours.findFirst({
+      where: and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)),
+      columns: { id: true },
+    });
+    return !!tour;
+  }
+
+  /**
+   * Guarda la ruta del folleto nuevo y devuelve el tour + la ruta anterior, para que la ruta HTTP
+   * borre el archivo viejo solo después de confirmar la base (mismo patrón que el logotipo).
+   */
+  static async updateBrochureUrl(id: string, brochureUrl: string, agencyId: string) {
+    return db.transaction(async (tx) => {
+      const [current] = await tx
+        .select({ brochureUrl: tours.brochureUrl })
+        .from(tours)
+        .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
+        .for("update");
+      if (!current) throw new NotFoundError("Tour no encontrado");
+
+      const [updatedTour] = await tx
+        .update(tours)
+        .set({ brochureUrl, updatedAt: new Date().toISOString() })
+        .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId)))
+        .returning();
+      if (!updatedTour) throw new NotFoundError("Tour no encontrado");
+
+      return { tour: updatedTour, previousBrochureUrl: current.brochureUrl ?? null };
+    });
+  }
+
+  /**
+   * Asigna o cambia el vehículo del tour (decisión del PM, 2026-11-12):
+   * 0. Con `templateId`, se reutiliza o crea la unidad de la agencia para esa plantilla del
+   *    catálogo (copia del croquis). Con `vehicleId`, la unidad ya existe.
+   * 1. El vehículo y el tour deben ser de la agencia (404).
+   * 2. Candado físico: los asientos de PASAJERO del croquis (sin operador ni asientos de staff)
+   *    deben alcanzar para los lugares que ya tienen derecho a asiento (anticipo cubierto).
+   *    Si no, ConflictError (409) sin escribir nada.
+   * 3. Se liberan SIEMPRE los asientos de pasajeros y los bloqueos de staff cuya etiqueta no existe
+   *    en el nuevo layout. Los que sí existen se conservan con la misma etiqueta.
+   * `maxCapacity` no se modifica: sigue siendo la capacidad planeada que captura el operador.
+   */
+  static async assignVehicle(
+    id: string,
+    target: { vehicleId?: string | undefined; templateId?: string | undefined },
+    agencyId: string,
+  ) {
+    return db.transaction(async (tx) => {
+      const vehicle = target.templateId
+        ? await VehicleTemplatesService.findOrCreateAgencyVehicle(tx, target.templateId, agencyId)
+        : await tx.query.vehicles.findFirst({
+            where: and(eq(vehicles.id, target.vehicleId ?? ""), eq(vehicles.agencyId, agencyId)),
+            columns: { id: true, layoutMap: true },
+          });
+      if (!vehicle) {
+        throw new NotFoundError("Vehículo no encontrado o sin permisos");
+      }
+      const vehicleId = vehicle.id;
+
+      // Bloquea la fila del tour: ninguna reserva cambia de cupo mientras se valida.
+      const [tour] = await tx
+        .select({ id: tours.id, price: tours.price, depositPerPerson: tours.depositPerPerson })
+        .from(tours)
+        .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
+        .for("update");
+      if (!tour) {
+        throw new NotFoundError("Tour no encontrado o sin permisos");
+      }
+
+      const seatLabels = getLayoutSeatLabels(vehicle.layoutMap ?? []);
+      const passengerSeats = getVehicleCapacity(vehicle.layoutMap ?? []).passenger;
+      const seatRightSeats = await BookingCapacityService.getSeatRightSeats(tx, tour);
+      if (passengerSeats < seatRightSeats) {
+        throw new ConflictError(
+          `El vehículo tiene ${passengerSeats} asientos de pasajero y ${seatRightSeats} pasajeros ya tienen derecho a asiento. Elige una unidad con más capacidad.`,
+        );
+      }
+
+      const [updatedTour] = await tx
+        .update(tours)
+        .set({ vehicleId, updatedAt: new Date().toISOString() })
+        .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
+        .returning();
+      if (!updatedTour) {
+        throw new NotFoundError("Tour no encontrado o sin permisos");
+      }
+
+      // Asientos de pasajeros con etiqueta que no existe en el nuevo layout (incluye etiquetas no
+      // numéricas o con otro formato, que antes quedaban ocultas).
+      const tourBookingIds = tx
+        .select({ id: bookings.id })
+        .from(bookings)
+        .where(eq(bookings.tourId, id));
+      const releasedPassengers = await tx
+        .update(bookingPassengers)
+        .set({ seatLabel: null, updatedAt: new Date().toISOString() })
+        .where(
+          and(
+            inArray(bookingPassengers.bookingId, tourBookingIds),
+            isNotNull(bookingPassengers.seatLabel),
+            seatLabels.length > 0 ? notInArray(bookingPassengers.seatLabel, seatLabels) : undefined,
+          ),
+        )
+        .returning({ seatLabel: bookingPassengers.seatLabel, status: bookingPassengers.status });
+
+      const releasedBlocks = await tx
+        .delete(tourBlockedSeats)
+        .where(
+          and(
+            eq(tourBlockedSeats.tourId, id),
+            seatLabels.length > 0 ? notInArray(tourBlockedSeats.seatLabel, seatLabels) : undefined,
+          ),
+        )
+        .returning({ seatLabel: tourBlockedSeats.seatLabel });
+
+      return {
+        ...updatedTour,
+        // Solo cuentan los pasajeros activos (los cancelados también se limpian, pero no se ven).
+        releasedSeats: {
+          passengers: releasedPassengers.filter((p) => p.status === "ACTIVE").length,
+          blocked: releasedBlocks.length,
+        },
+      };
     });
   }
 }

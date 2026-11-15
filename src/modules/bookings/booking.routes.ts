@@ -6,105 +6,68 @@ import {
   cancelBookingBodySchema,
   cancelBookingParamsSchema,
   cancelFullBookingBodySchema,
-  createBookingBodySchema,
+  publicRegisterBodySchema,
   newReservationBookingSchema,
   tourByIdParamsSchema,
+  transferPassengerBodySchema,
 } from "./booking.schema.js";
 import { BookingService } from "./booking.service.js";
+import { RATE_LIMITS } from "../../shared/security/rate-limits.js";
 
+/**
+ * Reservas. Prefijo: /api/bookings. Sin try/catch: los errores de dominio (NotFound → 404,
+ * BusinessRule → 400, Conflict → 409) y los 500 los traduce el manejador global de app.ts.
+ *
+ * `POST /` (registro de grupo con sesión) se eliminó el 2026-11-15 (auditoría de arquitectura): no
+ * tenía consumidores, duplicaba `POST /public/register` sin exigir el aviso de privacidad (regla 19)
+ * y no comprobaba que el token fuera de la agencia de la sesión.
+ */
 export async function bookingRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
+  // Registro del grupo desde el Magic Link (público: lo autentica el token del cuerpo).
   server.post(
     "/public/register",
     {
-      schema: { body: createBookingBodySchema },
+      config: { rateLimit: RATE_LIMITS.publicRegister },
+      schema: { body: publicRegisterBodySchema },
     },
     async (request, reply) => {
-      try {
-        const booking = await BookingService.processGroupBooking(request.body);
-        if (!booking) {
-          return reply.status(400).send({ error: "Booking no procesado" });
-        }
-        return reply.status(201).send(booking);
-      } catch (error) {
-        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
-      }
+      const booking = await BookingService.processGroupBooking(request.body);
+      return reply.status(201).send(booking);
     },
   );
 
-  (server.post(
-    "/",
+  server.post(
+    "/:id/quick-booking",
     {
       onRequest: [app.authenticate],
-      schema: {
-        body: createBookingBodySchema,
-      },
+      schema: { body: newReservationBookingSchema, params: tourByIdParamsSchema },
     },
     async (request, reply) => {
-      try {
-        const booking = await BookingService.processGroupBooking(request.body);
-        if (!booking) {
-          return reply.status(400).send({ error: "Booking no procesado" });
-        }
-        return reply.status(201).send(booking);
-      } catch (error) {
-        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
-      }
+      const result = await BookingService.createQuickBooking(
+        request.params.id,
+        request.body,
+        request.user.agencyId,
+      );
+      return reply.status(201).send({ success: true, data: result });
     },
-  ),
-    server.post(
-      "/:id/quick-booking",
-      {
-        onRequest: [app.authenticate],
-        schema: {
-          body: newReservationBookingSchema,
-          params: tourByIdParamsSchema,
-        },
-      },
-      async (request, reply) => {
-        try {
-          const { agencyId } = request.user;
-          const result = await BookingService.createQuickBooking(
-            request.params.id,
-            request.body,
-            agencyId,
-          );
-          return reply.status(201).send({ success: true, data: result });
-        } catch (error) {
-          app.log.error(error, "Error en quick-booking");
-          if (error instanceof Error && error.message === "Tour no encontrado") {
-            return reply.status(404).send({ error: error.message });
-          }
-          if (error instanceof Error) return reply.status(500).send({ error: error?.message });
-        }
-      },
-    ));
+  );
 
+  // Cancelación total con penalización en porcentaje (sin uso en el front, que usa cancel-full).
   server.patch(
     "/:id/cancel",
     {
       onRequest: [app.authenticate],
-      schema: {
-        params: cancelBookingParamsSchema,
-        body: cancelBookingBodySchema,
-      },
+      schema: { params: cancelBookingParamsSchema, body: cancelBookingBodySchema },
     },
     async (request, reply) => {
-      try {
-        const { id } = request.params;
-        const { penaltyPercentage } = request.body;
-        const { agencyId } = request.user;
-        const result = await BookingService.cancelBooking(id, penaltyPercentage, agencyId);
-
-        return reply.status(200).send({
-          success: true,
-          data: result,
-        });
-      } catch (error) {
-        app.log.error(error, `Error al cancelar reserva ${request.params.id}`);
-        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
-      }
+      const result = await BookingService.cancelBooking(
+        request.params.id,
+        request.body.penaltyPercentage,
+        request.user.agencyId,
+      );
+      return reply.status(200).send({ success: true, data: result });
     },
   );
 
@@ -112,52 +75,27 @@ export async function bookingRoutes(app: FastifyInstance) {
     "/:bookingId/add-passenger",
     {
       onRequest: [app.authenticate],
-      schema: {
-        params: bookingByIdParamsSchema,
-        body: addPassengerToBookingBody,
-      },
+      schema: { params: bookingByIdParamsSchema, body: addPassengerToBookingBody },
     },
     async (request, reply) => {
-      try {
-        const { agencyId } = request.user;
-        const { bookingId } = request.params;
-        const { tourId } = request.body;
-        const result = await BookingService.addPassengerToBooking(bookingId, tourId, agencyId);
-        return reply.status(200).send(result);
-      } catch (error) {
-        app.log.error(error, `Error al agregar viajero a reserva ${request.params.bookingId}`);
-        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
-      }
+      const result = await BookingService.addPassengerToBooking(
+        request.params.bookingId,
+        request.body.tourId,
+        request.user.agencyId,
+      );
+      return reply.status(200).send(result);
     },
   );
 
   server.delete(
     "/:bookingId/pending-slots",
-    {
-      onRequest: [app.authenticate],
-      schema: {
-        params: bookingByIdParamsSchema,
-      },
-    },
+    { onRequest: [app.authenticate], schema: { params: bookingByIdParamsSchema } },
     async (request, reply) => {
-      try {
-        const { agencyId } = request.user;
-        const { bookingId } = request.params;
-
-        const result = await BookingService.removePendingSlot(bookingId, agencyId);
-
-        return reply.status(200).send(result);
-      } catch (error) {
-        app.log.error(
-          error,
-          `Error al liberar cupo fantasma en reserva ${request.params.bookingId}`,
-        );
-        // Degradación semántica de errores para no enviar siempre un 500
-        const statusCode = error instanceof Error && error.message.includes("inválida") ? 404 : 400;
-        return reply.status(statusCode).send({
-          error: error instanceof Error ? error.message : "Error interno del servidor",
-        });
-      }
+      const result = await BookingService.removePendingSlot(
+        request.params.bookingId,
+        request.user.agencyId,
+      );
+      return reply.status(200).send(result);
     },
   );
 
@@ -165,32 +103,41 @@ export async function bookingRoutes(app: FastifyInstance) {
     "/:id/cancel-full",
     {
       onRequest: [app.authenticate],
-      schema: {
-        params: cancelBookingParamsSchema,
-        body: cancelFullBookingBodySchema,
-      },
+      schema: { params: cancelBookingParamsSchema, body: cancelFullBookingBodySchema },
+    },
+    async (request, reply) => {
+      const result = await BookingService.cancelFullBooking(
+        request.params.id,
+        request.body.penaltyAmount,
+        request.user.agencyId,
+      );
+      return reply.status(200).send({ success: true, data: result });
+    },
+  );
+
+  // Transferencia de un lugar (titular o acompañante) a otra persona.
+  server.patch(
+    "/:bookingId/transfer",
+    {
+      onRequest: [app.authenticate],
+      schema: { params: bookingByIdParamsSchema, body: transferPassengerBodySchema },
     },
     async (request, reply) => {
       try {
-        const { id } = request.params;
-        const { penaltyAmount } = request.body;
-        const { agencyId } = request.user;
-
-        // Llamada al nuevo método del servicio
-        const result = await BookingService.cancelFullBooking(id, penaltyAmount, agencyId);
-
-        return reply.status(200).send({
-          success: true,
-          data: result,
-        });
+        const result = await BookingService.transferPassenger(
+          request.params.bookingId,
+          request.body,
+          request.user.agencyId,
+        );
+        return reply.status(200).send({ success: true, data: result });
       } catch (error) {
-        app.log.error(error, `Error al cancelar reserva completa ${request.params.id}`);
-        // Retornamos 400 en lugar de 500 si es un error de regla de negocio
-        const statusCode =
-          error instanceof Error && error.message.includes("penalización") ? 400 : 500;
-        return reply
-          .status(statusCode)
-          .send({ error: error instanceof Error ? error.message : "Error interno" });
+        // Carrera con el índice único (viajero activo dos veces en el tour).
+        if (error instanceof Error && "code" in error && error.code === "23505") {
+          return reply
+            .status(409)
+            .send({ error: "Esta persona ya tiene un lugar activo en este tour." });
+        }
+        throw error;
       }
     },
   );

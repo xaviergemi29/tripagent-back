@@ -13,7 +13,11 @@ export const createPaymentBodySchema = z.object({
   exchangeRate: z.number().positive().optional(),
   method: z.enum(PAYMENT_METHOD.enumValues, "Método de pago requerido"),
   type: z.enum(PAYMENT_TYPE.enumValues).default("PAYMENT"),
-  referenceInfo: z.string().trim().optional(),
+  referenceInfo: z
+    .string()
+    .trim()
+    .max(500, "La referencia admite máximo 500 caracteres")
+    .optional(),
 });
 
 export const voidPaymentParamsSchema = z.object({
@@ -24,7 +28,9 @@ export const voidPaymentParamsSchema = z.object({
 export const voidPaymentBodySchema = z.object({
   reason: z
     .string()
+    .trim()
     .min(3, "Debes proporcionar un motivo de anulación")
+    .max(300, "El motivo admite máximo 300 caracteres")
     .default("Error de captura"),
 });
 

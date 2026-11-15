@@ -20,10 +20,17 @@ const BOOKING_A = "99999999-9999-4999-8999-999999999999";
 const PASSENGER_A = "aaaaaaaa-0000-4000-8000-000000000001"; // traveler.id de un pasajero del tour A
 const PASSENGER_B = "bbbbbbbb-0000-4000-8000-000000000002"; // traveler.id de otra agencia
 
+// Tour A: $1,000 por persona, anticipo $500 por persona.
 const toursTable = [
-  { id: TOUR_A, agencyId: AGENCY_A, deletedAt: null },
-  { id: TOUR_B, agencyId: AGENCY_B, deletedAt: null },
+  { id: TOUR_A, agencyId: AGENCY_A, deletedAt: null, price: 1000, depositPerPerson: 500 },
+  { id: TOUR_B, agencyId: AGENCY_B, deletedAt: null, price: 1000, depositPerPerson: 500 },
 ];
+
+/** Grupo de 2 lugares ($2,000) del pasajero A. Anticipo requerido: 2 × $500 = $1,000. */
+const groupWithPaid = (amountPaid: number) => ({
+  id: "bp-1",
+  booking: { amountPaid, totalPrice: 2000, magicToken: { numberPassengers: 2 } },
+});
 
 const toursFindFirst = async ({ where }: { where?: SQL }) =>
   toursTable.find((t) => rowMatches(where, t));
@@ -33,15 +40,22 @@ const seatsUrl = (tourId: string, seat?: string) =>
 
 /**
  * Transacción simulada de updateSeatStatus. `assignedRows` es lo que devuelve el UPDATE de
- * asignación (filas de booking_passengers del tour que coinciden con passengerId).
+ * asignación (filas de booking_passengers del tour que coinciden con passengerId) y `passenger`
+ * lo que encuentra la validación de anticipo (undefined = el pasajero no es de este tour).
  */
-function mockSeatTransaction(assignedRows: { id: string }[]) {
+function mockSeatTransaction(
+  assignedRows: { id: string }[],
+  passenger: ReturnType<typeof groupWithPaid> | undefined = groupWithPaid(1000),
+) {
   const select = mock.fn(() => chain([{ id: BOOKING_A }]));
   const update = mock.fn(() => chain(assignedRows));
   const del = mock.fn(() => chain(undefined));
   const insert = mock.fn(() => chain(undefined));
   const tx = {
-    query: { tours: { findFirst: toursFindFirst } },
+    query: {
+      tours: { findFirst: toursFindFirst },
+      bookingPassengers: { findFirst: async () => passenger },
+    },
     select,
     update,
     delete: del,
@@ -158,7 +172,7 @@ describe("/api/seats: autenticación y aislamiento por agencia", () => {
     });
 
     it("manipular passengerId con un viajero ajeno al tour: 404 (la transacción se revierte)", async () => {
-      mockSeatTransaction([]); // el UPDATE de asignación no encuentra filas del tour
+      mockSeatTransaction([], undefined); // el viajero no pertenece a ninguna reserva del tour
 
       const res = await app.inject({
         method: "PATCH",
@@ -169,6 +183,37 @@ describe("/api/seats: autenticación y aislamiento por agencia", () => {
 
       assert.equal(res.statusCode, 404);
       assert.equal(res.json().error, "Pasajero no encontrado en este tour");
+    });
+
+    it("regla del PM: un abono menor al anticipo requerido no da derecho a asiento (409)", async () => {
+      // Pagó $50 y el anticipo del grupo es $1,000.
+      const { update, del } = mockSeatTransaction([{ id: "row" }], groupWithPaid(50));
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: seatsUrl(TOUR_A, "01"),
+        cookies: sessionCookie(app, AGENCY_A, USER_A),
+        payload: { status: "ASSIGNED", passengerId: PASSENGER_A },
+      });
+
+      assert.equal(res.statusCode, 409);
+      assert.match(res.json().error, /anticipo requerido/);
+      // Se rechaza antes de escribir: el asiento no se libera ni se reasigna.
+      assert.equal(update.mock.callCount() + del.mock.callCount(), 0);
+    });
+
+    it("regla del PM: cubrir exactamente el anticipo requerido da derecho a asiento", async () => {
+      const { update } = mockSeatTransaction([{ id: "row" }], groupWithPaid(1000));
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: seatsUrl(TOUR_A, "01"),
+        cookies: sessionCookie(app, AGENCY_A, USER_A),
+        payload: { status: "ASSIGNED", passengerId: PASSENGER_A },
+      });
+
+      assert.equal(res.statusCode, 200);
+      assert.equal(update.mock.callCount(), 2);
     });
 
     it("usuario de A bloquea y libera asientos de su tour", async () => {

@@ -19,34 +19,21 @@ export async function bookingPassengersRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      try {
-        const { agencyId } = request.user;
-        const { bookingId, travelerId } = request.params;
-        const { penaltyAmount } = request.body;
+      const { agencyId } = request.user;
+      const { bookingId, travelerId } = request.params;
+      const { penaltyAmount } = request.body;
 
-        const result = await BookingPassengerService.cancelPassenger(
-          bookingId,
-          travelerId,
-          penaltyAmount,
-          agencyId,
-        );
+      const result = await BookingPassengerService.cancelPassenger(
+        bookingId,
+        travelerId,
+        penaltyAmount,
+        agencyId,
+      );
 
-        return reply.status(200).send({
-          success: true,
-          data: result,
-        });
-      } catch (error) {
-        app.log.error(error, "Error al cancelar pasajero parcial");
-
-        const errorMessage =
-          error instanceof Error
-            ? error.message
-            : "Error interno al procesar la cancelación parcial";
-
-        const statusCode = errorMessage.includes("no encontrad") ? 404 : 400;
-
-        return reply.status(statusCode).send({ error: errorMessage });
-      }
+      return reply.status(200).send({
+        success: true,
+        data: result,
+      });
     },
   );
 }

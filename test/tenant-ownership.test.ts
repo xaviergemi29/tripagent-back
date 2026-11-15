@@ -7,6 +7,7 @@ import {
   AGENCY_B,
   USER_A,
   USER_B,
+  chain,
   createTestApp,
   rowMatches,
   sessionCookie,
@@ -85,9 +86,11 @@ describe("POST /api/bookings/:id/quick-booking — el tour debe ser de la agenci
       payload: body,
     });
 
-    // El flujo pasó la validación y llegó al conteo de capacidad (simulado con un corte).
+    // El flujo pasó la validación y llegó al candado de capacidad (simulado con un corte). El corte
+    // es un error inesperado: 500 con mensaje genérico (el texto interno nunca sale al cliente).
     assert.equal(select.mock.callCount(), 1);
-    assert.equal(res.json().error, PASSED_OWNERSHIP_CHECK);
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.json(), { error: "Error interno del servidor" });
   });
 });
 
@@ -106,7 +109,16 @@ describe("PATCH /api/tours/:id/vehicle — el vehículo debe ser de la agencia",
       { id: TOUR_A, agencyId: AGENCY_A, vehicleId: VEHICLE_A },
     ]);
     const update = mock.fn(() => ({ set: () => ({ where: () => ({ returning }) }) }));
-    const tx = { query: { vehicles: { findFirst: findIn(vehiclesTable) } }, update };
+    const tx = {
+      query: {
+        vehicles: { findFirst: findIn(vehiclesTable) },
+        bookings: { findMany: async () => [] }, // sin pasajeros con derecho a asiento
+      },
+      // SELECT … FOR UPDATE del tour (y subconsulta de reservas al liberar asientos).
+      select: () => chain([{ id: TOUR_A, price: 1000, depositPerPerson: 0 }]),
+      update,
+      delete: () => chain([]),
+    };
     return { tx, update };
   }
 
@@ -138,7 +150,8 @@ describe("PATCH /api/tours/:id/vehicle — el vehículo debe ser de la agencia",
     });
 
     assert.equal(res.statusCode, 200);
-    assert.equal(update.mock.callCount(), 1);
+    // 1) vehicleId del tour, 2) liberación de asientos que no existen en el nuevo layout.
+    assert.equal(update.mock.callCount(), 2);
     assert.equal(res.json().data.vehicleId, VEHICLE_A);
   });
 });

@@ -2,247 +2,207 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import {
   assignVehicleBodySchema,
+  cancelTourBodySchema,
   createTourBodySchema,
   getTourByIdParamsSchema,
   getToursQuerySchema,
   updateTourBodySchema,
 } from "./tours.schema.js";
-import { TourService } from "./tours.service.js";
-import fs from "node:fs";
-import path from "node:path";
-import type { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { brochureFilePrefix, TourService } from "./tours.service.js";
+import {
+  ensureUploadDirs,
+  hasFileSignature,
+  removeAbsoluteFile,
+  removeUpload,
+  toPublicUploadPath,
+  writeUpload,
+} from "../../shared/storage/uploads.js";
 
-const UPLOADS_DIR = path.join(process.cwd(), "public", "uploads", "brochures");
+/** Código de Postgres de una violación de restricción (unique, FK), si el error lo trae. */
+const pgCode = (error: unknown): string | undefined =>
+  error instanceof Error && "code" in error && typeof error.code === "string"
+    ? error.code
+    : undefined;
 
-// Inicialización asíncrona/idempotente de directorio
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
-
+/**
+ * Tours de la agencia de la sesión. Prefijo: /api/tours. Los errores de dominio (404/400/409) los
+ * traduce el manejador global de app.ts; aquí solo se mapean los códigos de Postgres propios.
+ */
 export async function tourRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
+  ensureUploadDirs();
 
-  // 1. GET
   server.get(
     "/",
-    {
-      onRequest: [app.authenticate],
-      schema: {
-        querystring: getToursQuerySchema,
-      },
-    },
+    { onRequest: [app.authenticate], schema: { querystring: getToursQuerySchema } },
     async (request, reply) => {
-      try {
-        const { agencyId } = request.user;
-        const tours = await TourService.findTours(request.query, agencyId);
-        return reply.status(200).send(tours);
-      } catch (error) {
-        app.log.error(error, "Error al consultar tours");
-        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
-        return reply.status(500).send({ error: "Error interno del servidor" });
-      }
+      const tours = await TourService.findTours(request.query, request.user.agencyId);
+      return reply.status(200).send(tours);
     },
   );
 
-  // 1. POST / (Crear)
   server.post(
     "/",
-    {
-      onRequest: [app.authenticate],
-      schema: {
-        body: createTourBodySchema,
-      },
-    },
+    { onRequest: [app.authenticate], schema: { body: createTourBodySchema } },
     async (request, reply) => {
-      try {
-        const { agencyId } = request.user;
-        const tour = await TourService.createTour(request.body, agencyId);
-        return reply.status(201).send({ data: tour });
-      } catch (error) {
-        app.log.error(error, "Error al crear tour");
-
-        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
-        return reply.status(500).send({ error: "Error interno del servidor" });
-      }
+      const tour = await TourService.createTour(request.body, request.user.agencyId);
+      return reply.status(201).send({ data: tour });
     },
   );
 
-  // 2. GET /:id (Consultar por UUID)
   server.get(
     "/:tourId",
-    {
-      onRequest: [app.authenticate],
-      schema: {
-        params: getTourByIdParamsSchema,
-      },
-    },
+    { onRequest: [app.authenticate], schema: { params: getTourByIdParamsSchema } },
     async (request, reply) => {
-      try {
-        const { agencyId } = request.user;
-        const { tourId } = request.params;
-        const tour = await TourService.findTourById(tourId, agencyId);
-
-        if (!tour) {
-          return reply.status(404).send({ error: "Tour no encontrado" });
-        }
-
-        return reply.status(200).send({ data: tour });
-      } catch (error) {
-        // ✅ Corregido mensaje de log
-        app.log.error(error, "Error al consultar tour por ID");
-        return reply.status(500).send({ error: "Error interno del servidor" });
-      }
+      const tour = await TourService.findTourById(request.params.tourId, request.user.agencyId);
+      if (!tour) return reply.status(404).send({ error: "Tour no encontrado" });
+      return reply.status(200).send({ data: tour });
     },
   );
 
-  // 3. PATCH /:id (Actualizar parcial)
+  // PATCH parcial: capacidad no menor que los ocupados, moneda/precio congelados (409).
   server.patch(
     "/:tourId",
     {
       onRequest: [app.authenticate],
-      schema: {
-        params: getTourByIdParamsSchema,
-        body: updateTourBodySchema,
-      },
+      schema: { params: getTourByIdParamsSchema, body: updateTourBodySchema },
     },
     async (request, reply) => {
       try {
-        const { agencyId } = request.user;
-        const { tourId } = request.params;
-        const body = request.body;
-
-        const tour = await TourService.updateTour(tourId, body, agencyId);
-
-        if (!tour) {
-          return reply.status(404).send({ error: "Tour no encontrado" });
-        }
-
+        const tour = await TourService.updateTour(
+          request.params.tourId,
+          request.body,
+          request.user.agencyId,
+        );
+        if (!tour) return reply.status(404).send({ error: "Tour no encontrado" });
         return reply.status(200).send({ data: tour });
       } catch (error) {
-        app.log.error(error, "Error al actualizar tour");
-
-        if (error?.code === "23505") {
+        if (pgCode(error) === "23505") {
           return reply.status(409).send({ error: "El título ingresado ya pertenece a otro tour" });
         }
-
-        return reply.status(500).send({ error: "Error interno del servidor" });
+        throw error;
       }
     },
   );
 
-  server.delete(
-    "/:tourId",
+  // Cancelación del tour por la agencia (decisión del PM, 2026-11-14). 409 ya cancelado o finalizado.
+  server.post(
+    "/:tourId/cancel",
     {
       onRequest: [app.authenticate],
-      schema: {
-        params: getTourByIdParamsSchema,
-      },
+      schema: { params: getTourByIdParamsSchema, body: cancelTourBodySchema },
     },
     async (request, reply) => {
+      const result = await TourService.cancelTour(
+        request.params.tourId,
+        request.body,
+        request.user.agencyId,
+      );
+      if (!result) return reply.status(404).send({ error: "Tour no encontrado" });
+      return reply.status(200).send({ data: result });
+    },
+  );
+
+  // Borrado lógico protegido: 409 con reservas activas o dinero abonado (regla 15).
+  server.delete(
+    "/:tourId",
+    { onRequest: [app.authenticate], schema: { params: getTourByIdParamsSchema } },
+    async (request, reply) => {
       try {
-        const { tourId } = request.params;
-        const { agencyId } = request.user;
-        const tour = await TourService.softDeleteTour(tourId, agencyId);
-
-        if (!tour) {
-          return reply.status(404).send({
-            error: "tour no encontrado",
-          });
-        }
-
-        return reply.status(200).send({
-          data: tour,
-        });
+        const tour = await TourService.softDeleteTour(request.params.tourId, request.user.agencyId);
+        if (!tour) return reply.status(404).send({ error: "tour no encontrado" });
+        return reply.status(200).send({ data: tour });
       } catch (error) {
-        app.log.error(error, "Error al eliminar tour por ID");
-
-        if (error?.code === "23503") {
+        if (pgCode(error) === "23503") {
           return reply.status(409).send({
             error: "No se puede eliminar el tour porque tiene registros o reservas asociadas",
           });
         }
-
-        return reply.status(500).send({ error: "Error interno del servidor" });
+        throw error;
       }
     },
   );
 
+  /**
+   * Folleto PDF (multipart, un archivo, ≤ 5 MB por el límite global de multipart).
+   * Orden seguro (auditoría 2026-11-15): 1) el tour debe ser de la agencia ANTES de escribir nada
+   * (antes un tour ajeno dejaba un PDF huérfano); 2) el contenido debe empezar con `%PDF-` (el
+   * mimetype lo declara el cliente); 3) se actualiza la base y después se borra el folleto anterior;
+   * si algo falla, se borra el archivo nuevo.
+   */
   server.post(
     "/:tourId/brochure",
-    {
-      onRequest: [app.authenticate],
-      schema: {
-        params: getTourByIdParamsSchema,
-      },
-    },
+    { onRequest: [app.authenticate], schema: { params: getTourByIdParamsSchema } },
     async (request, reply) => {
+      const { agencyId } = request.user;
+      const { tourId } = request.params;
+      let savedPath: string | null = null;
+
       try {
-        const { agencyId } = request.user;
-        const { tourId } = request.params;
-
-        // 1. Interceptar el archivo multipart a través del plugin de Fastify
-        const data = await request.file();
-
-        if (!data) {
-          return reply.status(400).send({ error: "No se adjuntó ningún archivo" });
+        if (!(await TourService.existsForAgency(tourId, agencyId))) {
+          return reply.status(404).send({ error: "Tour no encontrado" });
         }
 
+        const data = await request.file();
+        if (!data) return reply.status(400).send({ error: "No se adjuntó ningún archivo" });
+
         if (data.mimetype !== "application/pdf") {
+          data.file.resume();
           return reply.status(400).send({ error: "El archivo debe ser un PDF válido" });
         }
 
-        // 2. Definir ruta local y nombre seguro
-        const safeFilename = `tour-${tourId}-${Date.now()}.pdf`;
-        const savePath = path.join(UPLOADS_DIR, safeFilename);
+        const fileName = `${brochureFilePrefix(tourId)}${Date.now()}.pdf`;
+        savedPath = await writeUpload("brochures", fileName, data.file);
 
-        // 3. Transferencia asíncrona mediante Streams (Non-blocking I/O)
-        await pipeline(data.file as unknown as Readable, fs.createWriteStream(savePath));
+        if (data.file.truncated) {
+          return reply.status(400).send({ error: "El folleto no debe pesar más de 5 MB" });
+        }
+        if (!(await hasFileSignature(savedPath, "pdf"))) {
+          return reply.status(400).send({ error: "El archivo debe ser un PDF válido" });
+        }
 
-        // 4. Actualizar ruta relativa en PostgreSQL
-        const publicUrl = `/uploads/brochures/${safeFilename}`;
-        const tour = await TourService.updateBrochureUrl(tourId, publicUrl, agencyId);
+        const { tour, previousBrochureUrl } = await TourService.updateBrochureUrl(
+          tourId,
+          toPublicUploadPath("brochures", fileName),
+          agencyId,
+        );
+        savedPath = null; // La base ya apunta al archivo nuevo: no se borra.
+        await removeUpload("brochures", previousBrochureUrl, brochureFilePrefix(tourId));
 
         return reply.status(200).send({ data: tour });
       } catch (error) {
-        app.log.error(error, "Error al procesar la subida del folleto");
-        if (error instanceof Error) return reply.status(500).send({ error: error?.message });
-        return reply.status(500).send({ error: "Error interno al procesar el archivo" });
+        if (pgCode(error) === "FST_REQ_FILE_TOO_LARGE") {
+          return reply.status(400).send({ error: "El folleto no debe pesar más de 5 MB" });
+        }
+        throw error;
+      } finally {
+        // Archivo rechazado o base sin actualizar: no se deja huérfano en disco.
+        await removeAbsoluteFile(savedPath);
       }
     },
   );
 
+  // Asignar unidad de la agencia ({ vehicleId }) o plantilla del catálogo ({ templateId }).
   server.patch(
     "/:tourId/vehicle",
     {
       onRequest: [app.authenticate],
-      schema: {
-        params: getTourByIdParamsSchema,
-        body: assignVehicleBodySchema,
-      },
+      schema: { params: getTourByIdParamsSchema, body: assignVehicleBodySchema },
     },
     async (request, reply) => {
       try {
-        const { agencyId } = request.user;
-        const { tourId } = request.params;
-        const { vehicleId, resetOrphans } = request.body;
-
-        const tour = await TourService.assignVehicle(tourId, vehicleId, agencyId, resetOrphans);
-
+        const { vehicleId, templateId } = request.body;
+        const tour = await TourService.assignVehicle(
+          request.params.tourId,
+          { vehicleId, templateId },
+          request.user.agencyId,
+        );
         return reply.status(200).send({ data: tour });
       } catch (error) {
-        app.log.error(error, "Error al asignar vehículo al tour");
-
-        if (error.message.includes("no encontrado")) {
-          return reply.status(404).send({ error: error.message });
-        }
-
-        // Manejo de error de constraint de base de datos (Ej. vehicleId no existe en la tabla vehicles)
-        if (error?.code === "23503") {
+        if (pgCode(error) === "23503") {
           return reply.status(400).send({ error: "El vehículo seleccionado no existe." });
         }
-
-        return reply.status(500).send({ error: "Error interno del servidor" });
+        throw error;
       }
     },
   );
