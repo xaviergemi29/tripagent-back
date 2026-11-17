@@ -1,13 +1,14 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import type { CreatePaymentBody } from "./payments.schema.js";
-import { bookings, PAYMENT_STATUS, payments } from "../../db/schema.js";
+import { bookings, payments } from "../../db/schema.js";
 import {
   BusinessRuleError,
   ConflictError,
   NotFoundError,
 } from "../../shared/errors/domain-errors.js";
 import { summarizeRefunds } from "../../shared/utils/refund.util.js";
+import { derivePaymentStatus, ledgerHasRefund } from "../../shared/utils/payment-status.util.js";
 import { BookingStatusService } from "../bookings/booking-status.service.js";
 import { lockBookingForUpdate } from "../bookings/booking-lock.util.js";
 
@@ -64,6 +65,12 @@ export class PaymentService {
         }
       }
 
+      // Libro de la reserva (para saber si ya hubo devoluciones reales: estado REFUNDED).
+      const ledger = await tx.query.payments.findMany({
+        where: eq(payments.bookingId, bookingId),
+        columns: { type: true, amount: true, referenceInfo: true },
+      });
+
       // 2. Lógica Financiera: Inversión de signo para Reembolsos
       const actualAmount = data.type === "REFUND" ? -Math.abs(data.amount) : Math.abs(data.amount);
 
@@ -105,18 +112,12 @@ export class PaymentService {
       const newTotalPaid = Number(paymentSumResult?.totalPaid);
       const totalPrice = Number(booking.totalPrice);
 
-      // 5. Máquina de Estados Financiera (State Machine)
-      let newPaymentStatus: (typeof PAYMENT_STATUS.enumValues)[number] = "PARTIAL";
-
-      // Un reembolso que deja la reserva en $0 o menos es REFUNDED, aunque el total sea $0 (reserva
-      // cancelada sin penalización); antes caía en PAID porque 0 ≥ 0.
-      if (data.type === "REFUND" && newTotalPaid <= 0) {
-        newPaymentStatus = "REFUNDED";
-      } else if (newTotalPaid >= totalPrice) {
-        newPaymentStatus = "PAID";
-      } else if (newTotalPaid <= 0) {
-        newPaymentStatus = "PENDING";
-      }
+      // 5. Estado de pago con la regla única (un reembolso que deja $0 o menos → REFUNDED).
+      const newPaymentStatus = derivePaymentStatus({
+        amountPaid: newTotalPaid,
+        totalPrice,
+        hasRefund: ledgerHasRefund([...ledger, newPayment]),
+      });
 
       // 6. Sincronizar el estado en la tabla de la Reserva (Bookings)
       await tx
@@ -178,7 +179,7 @@ export class PaymentService {
       // dejaba `amountPaid` por debajo de lo realmente cobrado).
       const ledger = await tx.query.payments.findMany({
         where: eq(payments.bookingId, bookingId),
-        columns: { type: true, referenceInfo: true },
+        columns: { type: true, amount: true, referenceInfo: true },
       });
       const alreadyVoided = ledger.some(
         (entry) =>
@@ -186,6 +187,15 @@ export class PaymentService {
           (entry.referenceInfo ?? "").includes(voidReference(originalPayment.id)),
       );
       if (alreadyVoided) throw new ConflictError("Este abono ya fue anulado.");
+
+      // Una anulación no puede dejar lo pagado en negativo (decisión del usuario, 2026-11-17): si ese
+      // dinero ya se devolvió con un reembolso, anularlo lo descontaría dos veces.
+      const netPaidBefore = ledger.reduce((sum, entry) => sum + Number(entry.amount), 0);
+      if (netPaidBefore - Math.abs(Number(originalPayment.amount)) < -0.005) {
+        throw new ConflictError(
+          "No se puede anular: ese dinero ya se devolvió con un reembolso y lo pagado quedaría en negativo.",
+        );
+      }
 
       // 2. Transacción de compensación: Arrastramos todos los datos de conversión en negativo
       const [voidRecord] = await tx
@@ -231,13 +241,12 @@ export class PaymentService {
 
       const totalPrice = Number(booking?.totalPrice || 0);
 
-      // 5. Máquina de Estados Financiera (Recálculo)
-      let newPaymentStatus: (typeof PAYMENT_STATUS.enumValues)[number] = "PARTIAL";
-      if (newTotalPaid >= totalPrice) {
-        newPaymentStatus = "PAID";
-      } else if (newTotalPaid <= 0) {
-        newPaymentStatus = "PENDING";
-      }
+      // 5. Estado de pago con la regla única (antes: total $0 y sin dinero daba PAID).
+      const newPaymentStatus = derivePaymentStatus({
+        amountPaid: newTotalPaid,
+        totalPrice,
+        hasRefund: ledgerHasRefund(ledger),
+      });
 
       // 6. Actualizar el estado de la reserva
       await tx

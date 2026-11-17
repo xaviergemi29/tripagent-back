@@ -48,7 +48,7 @@ function mockBookingLedger(initialStatus: string, existingPayments: FakePayment[
         findFirst: async () => ({ ...payments[0], agencyId: AGENCY_A, bookingId: BOOKING_ID }),
         // Libro de la reserva (validación de doble anulación).
         findMany: async () =>
-          payments.map((p) => ({ type: p.type, referenceInfo: p.referenceInfo })),
+          payments.map((p) => ({ type: p.type, amount: p.amount, referenceInfo: p.referenceInfo })),
       },
     },
     insert: () => ({

@@ -2,8 +2,14 @@ import { eq, and, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { BookingStatusService } from "../bookings/booking-status.service.js";
 import { lockBookingForUpdate } from "../bookings/booking-lock.util.js";
-import { BusinessRuleError, NotFoundError } from "../../shared/errors/domain-errors.js";
-import { bookings, bookingPassengers, PAYMENT_STATUS, magicTokens } from "../../db/schema.js";
+import {
+  BusinessRuleError,
+  ConflictError,
+  NotFoundError,
+} from "../../shared/errors/domain-errors.js";
+import { bookings, bookingPassengers, magicTokens } from "../../db/schema.js";
+import { getExpectedGroupSize } from "../../shared/utils/booking-rules.util.js";
+import { derivePaymentStatus } from "../../shared/utils/payment-status.util.js";
 
 export class BookingPassengerService {
   static async cancelPassenger(
@@ -20,6 +26,10 @@ export class BookingPassengerService {
       // 1. Validar la reserva maestra
       const booking = await tx.query.bookings.findFirst({
         where: and(eq(bookings.id, bookingId), eq(bookings.agencyId, agencyId)),
+        with: {
+          tour: { columns: { price: true } },
+          magicToken: { columns: { numberPassengers: true } },
+        },
       });
 
       if (!booking) throw new NotFoundError("Reserva no encontrada");
@@ -37,6 +47,15 @@ export class BookingPassengerService {
 
       if (!targetPassenger) {
         throw new BusinessRuleError("El pasajero no existe o ya fue cancelado");
+      }
+
+      // El titular es el responsable financiero: no se da de baja por aquí (decisión del usuario,
+      // 2026-11-17). Antes la reserva quedaba sin titular activo y desaparecía del Centro de Control
+      // aunque seguía ocupando lugares y conservaba su dinero.
+      if (targetPassenger.isTitular) {
+        throw new ConflictError(
+          "No se puede dar de baja al titular: transfiere la titularidad o cancela la reserva completa.",
+        );
       }
 
       // 3. Obtener el grupo activo para las matemáticas
@@ -57,8 +76,19 @@ export class BookingPassengerService {
       // 4. Matemáticas Financieras: El descuento
       const currentTotalPrice = Number(booking.totalPrice);
       const amountPaid = Number(booking.amountPaid);
-      // Valor actual y exacto de un asiento individual en este grupo antes de la baja
-      const unitPrice = currentTotalPrice / activeCount;
+      // Precio de un lugar = total ÷ lugares APARTADOS (decisión del usuario, 2026-11-17; mismo
+      // `unitPrice` que muestra el Centro de Control). Antes se dividía entre los pasajeros activos y,
+      // con lugares aún sin registrar, se descontaba de más: 3 lugares de $1,000 con 2 registrados
+      // descontaban $1,500 al dar de baja a uno. Nunca menos que los activos (dato inconsistente).
+      const groupSize = Math.max(
+        activeCount,
+        getExpectedGroupSize(
+          booking.magicToken?.numberPassengers,
+          currentTotalPrice,
+          Number(booking.tour?.price),
+        ),
+      );
+      const unitPrice = currentTotalPrice / groupSize;
 
       // 🛡️ Validación Defensiva: No puedes penalizar por un monto mayor a lo que cuesta el boleto
       if (penaltyAmount > unitPrice) {
@@ -77,16 +107,12 @@ export class BookingPassengerService {
         .set({ status: "CANCELLED", seatLabel: null })
         .where(eq(bookingPassengers.id, targetPassenger.id));
 
-      // 6. Máquina de Estados Financiera
-      let newPaymentStatus: (typeof PAYMENT_STATUS.enumValues)[number] = booking.paymentStatus;
-
-      if (amountPaid >= newTotalPrice && newTotalPrice > 0) {
-        newPaymentStatus = "PAID";
-      } else if (amountPaid > 0 && amountPaid < newTotalPrice) {
-        newPaymentStatus = "PARTIAL";
-      } else if (newTotalPrice === 0) {
-        newPaymentStatus = "PAID";
-      }
+      // 6. Estado de pago con la regla única (antes: total $0 sin dinero daba PAID).
+      const newPaymentStatus = derivePaymentStatus({
+        amountPaid,
+        totalPrice: newTotalPrice,
+        hasRefund: booking.paymentStatus === "REFUNDED",
+      });
 
       // 7. Actualizar la Reserva Maestra
       await tx

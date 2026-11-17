@@ -227,6 +227,8 @@ describe("Pagos en un tour cancelado: solo reembolsos", () => {
             magicToken: { numberPassengers: 2 },
           }),
         },
+        // Libro de la reserva (devoluciones previas → estado REFUNDED).
+        payments: { findMany: async () => ledger.map((entry) => ({ ...entry })) },
       },
       insert: () => ({
         values: (row: { amount: number; type: string }) => ({

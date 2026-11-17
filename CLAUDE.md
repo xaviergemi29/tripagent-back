@@ -243,7 +243,7 @@ Prefijos registrados en `server.ts` (todos bajo `/api`):
 | `cancelFullBooking` | Total = penalización (≤ total). Los pasajeros pasan a CANCELLED con `seatLabel = null` |
 | `cancelBooking` (%) | Variante por porcentaje; sin uso en el front. Desde el 2026-11-15 delega en `applyFullCancellation` con penalización = total × % / 100 (antes duplicaba la lógica y **no liberaba los asientos**); 404 reserva ajena, 409 ya cancelada |
 | `transferPassenger` | Re-vincula el lugar a otro viajero (find-or-create por WhatsApp; el original no se modifica). Titular: cambia `bookings.travelerId` (herencia de saldo) y, si el WhatsApp cambia, regenera `magic_tokens.token`. No toca dinero, cupo ni asiento, así que no llama a `syncStatus`. Regla 14 de `../CLAUDE.md` |
-| `BookingPassengerService.cancelPassenger` | Resta (precio unitario − penalización); precio unitario = total / activos; no aplica al último pasajero; `numberPassengers − 1` |
+| `BookingPassengerService.cancelPassenger` | Resta (precio unitario − penalización); precio unitario = total / lugares apartados (`getExpectedGroupSize`, nunca menos que los activos; 2026-11-17, antes total / activos); no aplica al último pasajero ni al titular (`ConflictError` → 409); `numberPassengers − 1` |
 
 **Ciclo de vida del tour** ([tours.service.ts](src/modules/tours/tours.service.ts); regla 15 y regla 8 de `../CLAUDE.md`). Todo en transacciones que bloquean la fila del tour (`SELECT … FOR UPDATE`); los rechazos son `ConflictError` → 409:
 
@@ -260,16 +260,18 @@ Prefijos registrados en `server.ts` (todos bajo `/api`):
 - **Candado** (`lockBookingForUpdate`, 2026-11-15): ambos métodos bloquean la fila de la reserva antes de leer. Sin él, dos abonos simultáneos calculaban cada uno su `SUM` sin ver el otro (el último dejaba un `amountPaid` incompleto), dos reembolsos podían superar juntos el tope y un abono podía anularse dos veces. Reserva ajena → 404.
 - **`registerPayment`:** antes de escribir, rechaza un `PAYMENT` en un tour cancelado (`ConflictError` → 409) un `REFUND` si la agencia no canceló el tour (409: si cancela el cliente no hay devolución en efectivo) y un `REFUND` mayor que el saldo a reembolsar (`summarizeRefunds`; `BusinessRuleError` → 400). Inserta el movimiento (negativo si es REFUND) y recalcula `amountPaid = SUM`. Luego deriva el estado:
 
-  | Condición | `paymentStatus` |
+  | Condición (`derivePaymentStatus`, única regla desde el 2026-11-17) | `paymentStatus` |
   |---|---|
-  | el movimiento es REFUND y `amountPaid ≤ 0` | REFUNDED (desde 2026-11-14 va primero: con total $0 caía en PAID) |
-  | `amountPaid ≥ total` | PAID |
+  | `amountPaid ≤ 0` y hay una devolución real en el libro (`ledgerHasRefund`: REFUND que no es anulación) | REFUNDED |
   | `amountPaid ≤ 0` | PENDING |
+  | `amountPaid ≥ total` | PAID |
   | en cualquier otro caso | PARTIAL |
+
+  La usan también `voidPayment`, `applyFullCancellation`, `cancelPassenger`, `addPassengerToBooking` y `removePendingSlot` (estos cuatro pasan `hasRefund` = estado previo `REFUNDED`, porque no mueven dinero).
 
   También actualiza `lastPaymentMethod`.
 
-- **`voidPayment`:** inserta un contra-asiento REFUND con `referenceInfo = "Anulación: … (Ref: id)"` y recalcula. Un abono ya anulado (existe un REFUND con su `(Ref: <id>)`) → 409 "Este abono ya fue anulado." (desde el 2026-11-15). Abono ajeno → 404; anular un REFUND → 400. `referenceInfo` ≤ 500 y el motivo ≤ 300 caracteres.
+- **`voidPayment`:** inserta un contra-asiento REFUND con `referenceInfo = "Anulación: … (Ref: id)"` y recalcula. Un abono ya anulado (existe un REFUND con su `(Ref: <id>)`) → 409 "Este abono ya fue anulado." (desde el 2026-11-15). Abono ajeno → 404; anular un REFUND → 400. Si la anulación dejaría lo pagado neto en negativo (ese dinero ya se devolvió con un reembolso) → 409 sin escribir (2026-11-17). `referenceInfo` ≤ 500 y el motivo ≤ 300 caracteres.
 - Ambos métodos terminan con `BookingStatusService.syncStatus(tx, bookingId)`.
 
 **Estado derivado** (decisión del PM, regla 11 de `../CLAUDE.md`): `BookingStatusService.syncStatus(tx, bookingId, { formCompleted? })` ([booking-status.service.ts](src/modules/bookings/booking-status.service.ts)) relee la reserva dentro de la transacción y aplica la función pura `calculateBookingStatus({ currentStatus, totalPaid, requiredDeposit, isFormComplete })`. El formulario se considera completo cuando la reserva ya salió de `AWAITING_REGISTRATION` (o cuando se pasa `formCompleted: true`, en el registro público). Se llama al final de `registerPayment`, `voidPayment`, `processGroupBooking`, `addPassengerToBooking`, `removePendingSlot` y `cancelPassenger`. **Cualquier flujo nuevo que cambie `amountPaid`, `totalPrice`, `numberPassengers` o el formulario debe llamarlo.**

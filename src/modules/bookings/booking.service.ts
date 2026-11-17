@@ -24,6 +24,7 @@ import {
   NotFoundError,
 } from "../../shared/errors/domain-errors.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
+import { derivePaymentStatus } from "../../shared/utils/payment-status.util.js";
 import {
   confirmLegacyPhone,
   fillEmptyTravelerFields,
@@ -576,15 +577,12 @@ export class BookingService {
       const unitPrice = Number(tour.price);
       const newTotalPrice = Number(lockedBooking.totalPrice) + unitPrice;
 
-      // Recalcular estatus de pago de forma atómica
-      const amountPaid = Number(lockedBooking.amountPaid);
-      let newPaymentStatus = lockedBooking.paymentStatus;
-
-      if (amountPaid >= newTotalPrice && newTotalPrice > 0) {
-        newPaymentStatus = "PAID";
-      } else if (amountPaid > 0 && amountPaid < newTotalPrice) {
-        newPaymentStatus = "PARTIAL";
-      }
+      // Estado de pago con la regla única (`derivePaymentStatus`).
+      const newPaymentStatus = derivePaymentStatus({
+        amountPaid: lockedBooking.amountPaid,
+        totalPrice: newTotalPrice,
+        hasRefund: lockedBooking.paymentStatus === "REFUNDED",
+      });
 
       await tx
         .update(bookings)
@@ -640,17 +638,13 @@ export class BookingService {
 
       // 1. Reducir la deuda y el tamaño del grupo
       const newTotalPrice = Math.max(0, Number(booking.totalPrice) - unitPrice);
-      const amountPaid = Number(booking.amountPaid);
 
-      // 2. 🚀 FIX: Recalcular la Máquina de Estados del Pago
-      let newPaymentStatus = booking.paymentStatus;
-      if (amountPaid >= newTotalPrice && newTotalPrice > 0) {
-        newPaymentStatus = "PAID";
-      } else if (amountPaid > 0 && amountPaid < newTotalPrice) {
-        newPaymentStatus = "PARTIAL";
-      } else if (newTotalPrice === 0 && amountPaid === 0) {
-        newPaymentStatus = "PENDING";
-      }
+      // 2. Estado de pago con la regla única (`derivePaymentStatus`).
+      const newPaymentStatus = derivePaymentStatus({
+        amountPaid: booking.amountPaid,
+        totalPrice: newTotalPrice,
+        hasRefund: booking.paymentStatus === "REFUNDED",
+      });
 
       await tx
         .update(magicTokens)
@@ -739,15 +733,13 @@ export class BookingService {
     // Si la penalización es de $500, el nuevo costo total de los "servicios consumidos" es $500.
     const newTotalPrice = penaltyAmount;
 
-    let newPaymentStatus: (typeof PAYMENT_STATUS.enumValues)[number] = booking.paymentStatus;
-
-    if (amountPaid >= newTotalPrice && newTotalPrice > 0) {
-      newPaymentStatus = "PAID";
-    } else if (newTotalPrice === 0 && amountPaid === 0) {
-      newPaymentStatus = "PENDING";
-    } else if (amountPaid > 0 && amountPaid < newTotalPrice) {
-      newPaymentStatus = "PARTIAL";
-    }
+    // Estado de pago con la regla única: con lo abonado ≥ retención queda PAID (con saldo a favor
+    // si abonó de más); antes, con retención $0 y dinero abonado se quedaba el estado anterior.
+    const newPaymentStatus = derivePaymentStatus({
+      amountPaid,
+      totalPrice: newTotalPrice,
+      hasRefund: booking.paymentStatus === "REFUNDED",
+    });
 
     await tx
       .update(bookings)
