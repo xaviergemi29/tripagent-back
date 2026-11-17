@@ -18,7 +18,6 @@ import type { LayoutMap } from "../shared/utils/vehicle-layout.util.js";
 
 export const CURRENCIES = pgEnum("currency", ["MXN", "USD"]);
 export const DESTINATION_TYPE = pgEnum("destination_type", ["NATIONAL", "INTERNATIONAL"]);
-export const SEAT_STATUS = pgEnum("seat_status", ["AVAILABLE", "ASSIGNED", "BLOCKED"]);
 
 // Control del ciclo de vida del pasajero individual (Cancelaciones Parciales)
 export const PASSENGER_STATUS = pgEnum("passenger_status", ["ACTIVE", "CANCELLED"]);
@@ -223,9 +222,6 @@ export const tours = pgTable(
     maxCapacity: integer("max_capacity").notNull(),
     // Lugares operativos (chofer, guía) que nunca se venden. Capacidad vendible = max - staff.
     staffCapacity: integer("staff_capacity").default(0).notNull(),
-    // Sin uso desde el 2026-11-14: "Pausado" no forma parte del MVP (decisión del PM). La columna se
-    // conserva (borrarla requiere una migración autorizada); la cancelación vive en `cancelledAt`.
-    isActive: boolean("is_active").default(true).notNull(),
 
     // Cancelación por la agencia (decisión del PM, 2026-11-14): evento definitivo de fuerza mayor que
     // cancela todas las reservas y obliga a reembolsar lo abonado. Nulo = el tour no está cancelado.

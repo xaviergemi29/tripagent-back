@@ -16,7 +16,6 @@ const tourWithDeposit = (depositPerPerson: number) => ({
   currency: "MXN",
   transportModality: "TRANSPORT_INCLUDED",
   departureDateTime: "2026-12-15",
-  isActive: true,
   vehicle: null,
   agency: { name: "Viajes Xalapa" },
 });

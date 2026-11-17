@@ -225,6 +225,13 @@
       "when": 1794752564580,
       "tag": "0031_performance_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794883123742,
+      "tag": "0032_drop_unused_seat_status_and_tour_is_active",
+      "breakpoints": true
     }
   ]
 }
