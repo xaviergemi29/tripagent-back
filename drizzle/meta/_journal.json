@@ -239,6 +239,13 @@
       "when": 1794886235569,
       "tag": "0033_phone_country_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1794946383890,
+      "tag": "0034_booking_unit_price",
+      "breakpoints": true
     }
   ]
 }

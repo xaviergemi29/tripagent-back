@@ -25,6 +25,8 @@ import {
 } from "../../shared/errors/domain-errors.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
 import { derivePaymentStatus } from "../../shared/utils/payment-status.util.js";
+import { resolveAgreedUnitPrice } from "../../shared/utils/booking-rules.util.js";
+import { formatMoney } from "../../shared/utils/money.util.js";
 import {
   confirmLegacyPhone,
   fillEmptyTravelerFields,
@@ -448,6 +450,7 @@ export class BookingService {
         travelerId: titularId,
         groupReference: generateGroupReference(),
         totalPrice: Number(tour.price) * numberPassengers,
+        unitPrice: Number(tour.price),
         amountPaid: 0,
         status: "AWAITING_REGISTRATION",
         paymentStatus: "PENDING",
@@ -501,6 +504,7 @@ export class BookingService {
           eq(bookings.agencyId, agencyId),
           isNull(bookings.deletedAt),
         ),
+        with: { tour: { columns: { currency: true } } },
       });
 
       if (!booking) throw new NotFoundError("Reserva no encontrada");
@@ -510,6 +514,7 @@ export class BookingService {
 
       const penaltyAmount =
         Math.round(Number(booking.totalPrice) * (penaltyPercentage / 100) * 100) / 100;
+      BookingService.assertClientRetention(booking, penaltyAmount);
       const financialSummary = await BookingService.applyFullCancellation(
         tx,
         booking,
@@ -551,7 +556,13 @@ export class BookingService {
       await lockBookingForUpdate(tx, bookingId, agencyId);
       const lockedBooking = await tx.query.bookings.findFirst({
         where: eq(bookings.id, bookingId),
-        columns: { status: true, totalPrice: true, amountPaid: true, paymentStatus: true },
+        columns: {
+          status: true,
+          totalPrice: true,
+          unitPrice: true,
+          amountPaid: true,
+          paymentStatus: true,
+        },
       });
       if (!lockedBooking || lockedBooking.status === "CANCELLED") {
         throw new NotFoundError("Reserva no encontrada o cancelada.");
@@ -573,8 +584,14 @@ export class BookingService {
         .set({ numberPassengers: updatedGroupSize })
         .where(eq(magicTokens.id, magicToken.id));
 
-      // 4. Ajuste Financiero: Sumar el precio unitario del tour
-      const unitPrice = Number(tour.price);
+      // 4. Ajuste financiero: un lugar más al precio pactado de la reserva (no al precio actual
+      // del tour, que pudo cambiar antes del primer abono).
+      const unitPrice = resolveAgreedUnitPrice({
+        unitPrice: lockedBooking.unitPrice,
+        totalPrice: lockedBooking.totalPrice,
+        numberPassengers: magicToken.numberPassengers,
+        tourPrice: tour.price,
+      });
       const newTotalPrice = Number(lockedBooking.totalPrice) + unitPrice;
 
       // Estado de pago con la regla única (`derivePaymentStatus`).
@@ -634,7 +651,13 @@ export class BookingService {
         where: eq(tours.id, booking.tourId),
         columns: { price: true },
       });
-      const unitPrice = Number(tour?.price || 0);
+      // Precio pactado de un lugar (no el precio actual del tour).
+      const unitPrice = resolveAgreedUnitPrice({
+        unitPrice: booking.unitPrice,
+        totalPrice: booking.totalPrice,
+        numberPassengers: magicToken.numberPassengers,
+        tourPrice: tour?.price,
+      });
 
       // 1. Reducir la deuda y el tamaño del grupo
       const newTotalPrice = Math.max(0, Number(booking.totalPrice) - unitPrice);
@@ -674,6 +697,7 @@ export class BookingService {
       // 1. Fail-Fast: Buscar reserva
       const booking = await tx.query.bookings.findFirst({
         where: and(eq(bookings.id, bookingId), eq(bookings.agencyId, agencyId)),
+        with: { tour: { columns: { currency: true } } },
       });
 
       if (!booking) throw new NotFoundError("Reserva no encontrada");
@@ -681,6 +705,7 @@ export class BookingService {
         throw new ConflictError("La reserva ya se encuentra cancelada");
       }
 
+      BookingService.assertClientRetention(booking, penaltyAmount);
       const financialSummary = await BookingService.applyFullCancellation(
         tx,
         booking,
@@ -692,6 +717,28 @@ export class BookingService {
         financialSummary,
       };
     });
+  }
+
+  /**
+   * Cancelación por el CLIENTE (decisión del usuario, 2026-11-17): la agencia retiene al menos lo
+   * ya abonado, así nunca queda un saldo a favor sin salida (en el MVP solo hay reembolsos cuando la
+   * agencia cancela el tour, y la reserva cancelada desaparece del Centro de Control). Antes una
+   * retención menor dejaba `surplusAmount > 0` que nadie podía registrar ni devolver. No aplica a
+   * `cancelTour` (la agencia cancela: retención $0 y se reembolsa todo).
+   */
+  private static assertClientRetention(
+    booking: { amountPaid: number | string; tour?: { currency: string } | null },
+    penaltyAmount: number,
+  ): void {
+    const amountPaid = Number(booking.amountPaid) || 0;
+    if (penaltyAmount + 0.005 < amountPaid) {
+      throw new BusinessRuleError(
+        `La retención no puede ser menor a lo ya abonado (${formatMoney(
+          amountPaid,
+          booking.tour?.currency ?? "MXN",
+        )}): cuando el cliente cancela, la agencia retiene lo pagado.`,
+      );
+    }
   }
 
   /**
@@ -713,8 +760,9 @@ export class BookingService {
     const currentTotalPrice = Number(booking.totalPrice);
     const amountPaid = Number(booking.amountPaid);
 
-    // 🛡️ Prevenir manipulación de montos desde el cliente
-    if (penaltyAmount > currentTotalPrice) {
+    // 🛡️ Prevenir manipulación de montos desde el cliente. Tope: el total o, en una reserva anterior
+    // pagada de más (antes se aceptaban abonos sobre el saldo), lo abonado, para poder retenerlo.
+    if (penaltyAmount > Math.max(currentTotalPrice, amountPaid) + 0.005) {
       throw new BusinessRuleError(
         "Violación de integridad: La penalización no puede superar el costo total original de la reserva.",
       );

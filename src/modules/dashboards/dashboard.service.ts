@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { bookings, TOUR_MODALITIES, tours } from "../../db/schema.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
@@ -8,6 +8,7 @@ import {
   getRequiredDeposit,
   getSellableCapacity,
   isDepositCovered,
+  resolveAgreedUnitPrice,
   sumOccupiedSeats,
 } from "../../shared/utils/booking-rules.util.js";
 import { PASSENGER_ROLE } from "../../shared/constants/domain.constants.js";
@@ -35,12 +36,12 @@ export class DashboardService {
       return point ? { location: point.location, time: point.time } : null;
     };
 
-    // 2. Extraer reservas activas
-    const activeBookings = await db.query.bookings.findMany({
+    // 2. Reservas del tour: las activas y, aparte, las que canceló el CLIENTE (filtro "Canceladas"
+    // del Centro de Control, 2026-11-17: solo consulta y anulación de abonos mal capturados).
+    const tourBookings = await db.query.bookings.findMany({
       where: and(
         eq(bookings.agencyId, agencyId),
         eq(bookings.tourId, tourId),
-        ne(bookings.status, "CANCELLED"),
         isNull(bookings.deletedAt),
       ),
       with: {
@@ -66,6 +67,12 @@ export class DashboardService {
         },
       },
     });
+
+    const activeBookings = tourBookings.filter((booking) => booking.status !== "CANCELLED");
+    // Si la agencia canceló el tour, sus reservas canceladas van en `refunds` (reembolsos).
+    const clientCancelledBookings = tour.cancelledAt
+      ? []
+      : tourBookings.filter((booking) => booking.status === "CANCELLED");
 
     // 2.1 Reservas canceladas (para los reembolsos): solo si la AGENCIA canceló el tour (decisión del
     // PM, 2026-11-14). Cuando el cliente cancela, la agencia retiene lo abonado como penalización y no
@@ -123,13 +130,17 @@ export class DashboardService {
     let assignedSeatsCount = 0;
 
     const groupedTravelers = [];
+    const cancelledTravelers = [];
     const baseTourPrice = Number(tour.price) || 1; // Fallback para evitar Div/0
 
     // 4. Transformación y Agregación (Single Pass - O(N))
-    for (const booking of activeBookings) {
+    for (const booking of [...activeBookings, ...clientCancelledBookings]) {
+      // Una reserva cancelada por el cliente se muestra con el mismo formato, pero no cuenta para
+      // ingresos, asientos ni derecho a asiento (todos sus pasajeros ya están cancelados).
+      const isCancelled = booking.status === "CANCELLED";
       const amountPaid = Number(booking.amountPaid || 0);
       const totalPrice = Number(booking.totalPrice || 0);
-      collectedRevenue += amountPaid;
+      if (!isCancelled) collectedRevenue += amountPaid;
 
       // Prioridad 1: Token Criptográfico (Fuente de verdad si se auto-registraron)
       // Prioridad 2: Heurística Financiera (Total Pagado / Precio Unitario)
@@ -140,28 +151,39 @@ export class DashboardService {
       );
 
       const passengersList = booking.passengers || [];
-      const activePassengers = passengersList.filter((p) => p.status !== "CANCELLED");
+      const activePassengers = isCancelled
+        ? passengersList
+        : passengersList.filter((p) => p.status !== "CANCELLED");
       const titularRow = activePassengers.find((p) => p.isTitular);
       if (!titularRow) continue;
 
       // Regla del PM: derecho a asiento cuando lo pagado cubre el anticipo requerido
       // (anticipo por persona × lugares apartados). Antes bastaba cualquier abono.
       const requiredDeposit = getRequiredDeposit(Number(tour.depositPerPerson), expectedGroupSize);
-      const hasSeatRight = isDepositCovered(amountPaid, requiredDeposit);
+      const hasSeatRight = !isCancelled && isDepositCovered(amountPaid, requiredDeposit);
 
       if (hasSeatRight) {
         eligibleForSeatCount += expectedGroupSize;
       }
 
       // Contar cuántos de ESTA reserva ya tienen asiento asignado
-      activePassengers.forEach((p) => {
-        if (p.seatLabel) {
-          assignedSeatsCount++;
-        }
-      });
+      if (!isCancelled) {
+        activePassengers.forEach((p) => {
+          if (p.seatLabel) {
+            assignedSeatsCount++;
+          }
+        });
+      }
 
       const isTitularFormPending = !titularRow.traveler.emergencyContactPhone;
-      const unitPrice = totalPrice / expectedGroupSize;
+      // Precio pactado por lugar (`bookings.unitPrice`; respaldo total ÷ lugares), el mismo que usan
+      // las altas y bajas de lugares.
+      const unitPrice = resolveAgreedUnitPrice({
+        unitPrice: booking.unitPrice,
+        totalPrice,
+        numberPassengers: booking.magicToken?.numberPassengers,
+        tourPrice: baseTourPrice,
+      });
 
       // 4.1 Mapeo de Acompañantes
       const mappedCompanions = activePassengers
@@ -196,7 +218,7 @@ export class DashboardService {
       const balance = Math.max(0, totalPrice - amountPaid);
 
       // 4.3 Mapeo del Titular
-      groupedTravelers.push({
+      const titularGroupRow = {
         id: titularRow.traveler.id,
         bookingId: booking.id,
         role: PASSENGER_ROLE.TITULAR,
@@ -226,7 +248,9 @@ export class DashboardService {
 
         payments: mappedPayments,
         companions: mappedCompanions,
-      });
+      };
+      if (isCancelled) cancelledTravelers.push(titularGroupRow);
+      else groupedTravelers.push(titularGroupRow);
     }
 
     // 4.4 Reembolsos (decisión del PM, 2026-11-14): reservas canceladas con dinero abonado. El saldo
@@ -313,6 +337,9 @@ export class DashboardService {
         : null,
 
       travelers: groupedTravelers,
+      // Canceladas por el cliente (mismo formato que `travelers`, `bookingStatus: CANCELLED`); vacío
+      // si la agencia canceló el tour (esas van en `refunds`).
+      cancelledTravelers,
       refunds,
     };
   }

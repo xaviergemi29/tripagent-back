@@ -147,6 +147,8 @@ describe("Cupo y sobreventa", () => {
       const booking = inserts.find((i) => i.table === "bookings")!.values;
       assert.equal(booking.status, "AWAITING_REGISTRATION");
       assert.equal(booking.totalPrice, 2000);
+      // Precio pactado por lugar, para altas y bajas posteriores (2026-11-17).
+      assert.equal(booking.unitPrice, 1000);
     });
 
     it("el viajero ya inscrito en el tour → 409", async () => {

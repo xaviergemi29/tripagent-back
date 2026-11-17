@@ -69,3 +69,23 @@ export const sumOccupiedSeats = (rows: OccupancyBookingRow[], tourPrice: number)
       total + getExpectedGroupSize(row.numberPassengers, Number(row.totalPrice), tourPrice),
     0,
   );
+
+/**
+ * Precio pactado por lugar de una reserva (2026-11-17, decisión del usuario): `bookings.unitPrice`,
+ * que se guarda al apartar. Respaldo para reservas anteriores sin el dato: total ÷ lugares apartados
+ * y, sin token, el precio del tour. Las altas, bajas y lugares liberados usan este precio, nunca el
+ * total ya ajustado (que puede incluir retenciones) dividido entre los pasajeros.
+ */
+export const resolveAgreedUnitPrice = (booking: {
+  unitPrice?: number | string | null | undefined;
+  totalPrice: number | string;
+  numberPassengers?: number | null | undefined;
+  tourPrice?: number | string | null | undefined;
+}): number => {
+  if (booking.unitPrice !== null && booking.unitPrice !== undefined)
+    return Number(booking.unitPrice);
+  if (booking.numberPassengers && booking.numberPassengers > 0) {
+    return Math.round((Number(booking.totalPrice) / booking.numberPassengers) * 100) / 100;
+  }
+  return Number(booking.tourPrice) || 0;
+};

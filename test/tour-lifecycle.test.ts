@@ -531,7 +531,8 @@ describe("Ciclo de vida del tour", () => {
         method: "PATCH",
         url: `/api/bookings/${BOOKING_ID}/cancel-full`,
         cookies: cookies(),
-        payload: { penaltyAmount: 500 },
+        // Retención = lo abonado: cuando cancela el cliente no puede ser menor (2026-11-17).
+        payload: { penaltyAmount: 1000 },
       });
 
       assert.equal(res.statusCode, 200);

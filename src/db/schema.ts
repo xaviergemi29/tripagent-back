@@ -298,6 +298,10 @@ export const bookings = pgTable(
     // Guardamos el precio en el momento de la reserva por si el Tour cambia de precio después
     currency: CURRENCIES("currency").default("MXN").notNull(),
     totalPrice: numeric("total_price", { precision: 10, scale: 2, mode: "number" }).notNull(),
+    // Precio pactado por lugar (precio del tour al apartar; 2026-11-17). Las altas, bajas y lugares
+    // liberados usan este precio, nunca el total ya ajustado ni el precio actual del tour. Nulo en
+    // reservas anteriores a la columna que la migración no pudo calcular: se usa total ÷ lugares.
+    unitPrice: numeric("unit_price", { precision: 10, scale: 2, mode: "number" }),
     amountPaid: numeric("amount_paid", { precision: 10, scale: 2, mode: "number" })
       .default(0)
       .notNull(),

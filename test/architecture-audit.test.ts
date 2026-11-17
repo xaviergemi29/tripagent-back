@@ -490,20 +490,21 @@ describe("Auditoría 2026-11-15", () => {
         method: "PATCH",
         url: `/api/bookings/${BOOKING_ID}/cancel`,
         cookies: cookiesA(),
-        payload: { penaltyPercentage: 25 },
+        // 50 % = $1,000 = lo abonado (la retención del cliente no baja de lo pagado, 2026-11-17).
+        payload: { penaltyPercentage: 50 },
       });
 
       assert.equal(res.statusCode, 200);
       const [passengers, booking] = payloads;
       assert.equal(passengers?.seatLabel, null, "los asientos se liberan (antes no)");
       assert.equal(booking?.status, "CANCELLED");
-      assert.equal(booking?.totalPrice, 500);
+      assert.equal(booking?.totalPrice, 1000);
       assert.deepEqual(res.json().data.financialSummary, {
         previousTotal: 2000,
-        newTotal: 500,
+        newTotal: 1000,
         amountPaid: 1000,
-        hasSurplus: true,
-        surplusAmount: 500,
+        hasSurplus: false,
+        surplusAmount: 0,
       });
     });
 

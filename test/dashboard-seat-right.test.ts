@@ -262,3 +262,78 @@ describe("Centro de Control: tour cancelado y reembolsos (decisión del PM, 2026
     assert.equal(refund.refundableAmount, 1000);
   });
 });
+
+describe("Centro de Control: reservas canceladas por el cliente (filtro «Canceladas»)", () => {
+  let app: TestApp;
+  before(async () => {
+    app = await createTestApp();
+  });
+  after(async () => {
+    await app.close();
+  });
+  afterEach(() => mock.restoreAll());
+
+  const getDashboard = () =>
+    app.inject({
+      method: "GET",
+      url: `/api/dashboards/${TOUR_ID}`,
+      cookies: sessionCookie(app, AGENCY_A, USER_A),
+    });
+
+  /** Reserva de 2 lugares cancelada por el cliente con "Sin Devolución" ($1,500 retenidos). */
+  const clientCancelled = () => {
+    const booking = bookingPaid("bc", 1500);
+    return {
+      ...booking,
+      status: "CANCELLED",
+      paymentStatus: "PAID",
+      totalPrice: 1500,
+      payments: [
+        {
+          id: "p1",
+          type: "PAYMENT",
+          method: "CASH",
+          amount: 1500,
+          createdAt: "2026-11-11T00:00:00.000Z",
+        },
+      ],
+      passengers: booking.passengers.map((p) => ({ ...p, status: "CANCELLED" })),
+    };
+  };
+
+  it("van aparte (`cancelledTravelers`) y no cuentan para ocupación, asientos ni ingresos", async () => {
+    mock.method(db.query.tours, "findFirst", (async () => tourWithDeposit(500)) as never);
+    mockBookings([bookingPaid("b1", 1000), clientCancelled()]);
+
+    const body = (await getDashboard()).json();
+
+    assert.deepEqual(
+      body.travelers.map((t: { bookingId: string }) => t.bookingId),
+      ["b1"],
+    );
+    assert.equal(body.cancelledTravelers.length, 1);
+    const [cancelled] = body.cancelledTravelers;
+    assert.equal(cancelled.bookingId, "bc");
+    assert.equal(cancelled.bookingStatus, "CANCELLED");
+    assert.equal(cancelled.hasSeatRight, false);
+    assert.equal(cancelled.paidAmount, 1500);
+    assert.equal(cancelled.balance, 0);
+    assert.equal(cancelled.payments.length, 1); // para poder anular un abono mal capturado
+    assert.equal(body.metrics.occupancy.current, 2); // solo b1
+    assert.equal(body.metrics.logistics.total, 2);
+    assert.equal(body.metrics.revenue.collected, 1000);
+  });
+
+  it("si la agencia canceló el tour, sus canceladas van en `refunds`, no aquí", async () => {
+    mock.method(db.query.tours, "findFirst", (async () => ({
+      ...tourWithDeposit(500),
+      cancelledAt: "2026-11-14T10:00:00.000Z",
+      cancellationReason: "WEATHER",
+      cancellationNote: null,
+    })) as never);
+    mockBookings([clientCancelled()], []);
+
+    const body = (await getDashboard()).json();
+    assert.deepEqual(body.cancelledTravelers, []);
+  });
+});

@@ -9,6 +9,7 @@ import {
 } from "../../shared/errors/domain-errors.js";
 import { summarizeRefunds } from "../../shared/utils/refund.util.js";
 import { derivePaymentStatus, ledgerHasRefund } from "../../shared/utils/payment-status.util.js";
+import { formatMoney } from "../../shared/utils/money.util.js";
 import { BookingStatusService } from "../bookings/booking-status.service.js";
 import { lockBookingForUpdate } from "../bookings/booking-lock.util.js";
 
@@ -29,7 +30,7 @@ export class PaymentService {
       // 1. Validar existencia y propiedad de la reserva
       const booking = await tx.query.bookings.findFirst({
         where: and(eq(bookings.id, bookingId), eq(bookings.agencyId, agencyId)),
-        with: { tour: { columns: { cancelledAt: true } } },
+        with: { tour: { columns: { cancelledAt: true, currency: true } } },
       });
 
       if (!booking) throw new NotFoundError("Reserva no encontrada o no pertenece a esta agencia");
@@ -61,6 +62,27 @@ export class PaymentService {
         if (Math.abs(data.amount) > maxRefund + 0.005) {
           throw new BusinessRuleError(
             `El reembolso ($${Math.abs(data.amount).toFixed(2)}) supera el saldo a reembolsar ($${maxRefund.toFixed(2)}).`,
+          );
+        }
+      }
+
+      if (data.type === "PAYMENT") {
+        // Reserva cancelada por el cliente: queda congelada para ingresos (decisión del usuario,
+        // 2026-11-17). Antes se aceptaba "para cubrir la retención"; no tiene uso real y abría la
+        // puerta a abonos duplicados o fuera de tiempo.
+        if (booking.status === "CANCELLED") {
+          throw new ConflictError("La reserva está cancelada: ya no se pueden registrar abonos.");
+        }
+        // Un abono nunca supera el saldo pendiente (decisión del usuario, 2026-11-17): antes un
+        // $5,000 tecleado por $500 se aceptaba y dejaba dinero sin explicación en el corte del tour.
+        const pendingBalance =
+          Math.round((Number(booking.totalPrice) - Number(booking.amountPaid)) * 100) / 100;
+        if (data.amount > pendingBalance + 0.005) {
+          throw new BusinessRuleError(
+            `El abono no puede superar el saldo pendiente de ${formatMoney(
+              Math.max(0, pendingBalance),
+              booking.tour?.currency ?? data.currency,
+            )}.`,
           );
         }
       }
@@ -170,9 +192,10 @@ export class PaymentService {
         throw new NotFoundError("El abono no existe o no pertenece a esta reserva");
       }
 
-      // 🛡️ Regla de Negocio: No puedes anular un reembolso/anulación
+      // Un reembolso o una anulación no se anulan: 409, como toda operación sobre un movimiento que
+      // ya no admite ese cambio (decisión del usuario, 2026-11-17; antes 400).
       if (originalPayment.type !== "PAYMENT") {
-        throw new BusinessRuleError("Solo se pueden anular abonos directos");
+        throw new ConflictError("Solo se pueden anular abonos directos");
       }
 
       // Un abono se anula una sola vez (antes una segunda anulación restaba el monto otra vez y
@@ -236,10 +259,18 @@ export class PaymentService {
       // 4. Obtener el precio total para evaluar la máquina de estados
       const booking = await tx.query.bookings.findFirst({
         where: eq(bookings.id, bookingId),
-        columns: { totalPrice: true },
+        columns: { totalPrice: true, status: true },
+        with: { tour: { columns: { cancelledAt: true } } },
       });
 
-      const totalPrice = Number(booking?.totalPrice || 0);
+      // Reserva cancelada por el CLIENTE: la retención es lo realmente abonado (decisión del usuario,
+      // 2026-11-17). Si después se anula un abono mal capturado (p. ej. efectivo que nunca llegó), la
+      // retención baja con él; antes quedaba una "deuda" imposible de cobrar, porque una reserva
+      // cancelada ya no acepta abonos. Si canceló la agencia, el total es $0 y no se toca.
+      const isClientCancelled = booking?.status === "CANCELLED" && !booking.tour?.cancelledAt;
+      const totalPrice = isClientCancelled
+        ? Math.max(0, newTotalPaid)
+        : Number(booking?.totalPrice || 0);
 
       // 5. Estado de pago con la regla única (antes: total $0 y sin dinero daba PAID).
       const newPaymentStatus = derivePaymentStatus({
@@ -254,6 +285,7 @@ export class PaymentService {
         .set({
           amountPaid: newTotalPaid,
           paymentStatus: newPaymentStatus,
+          ...(isClientCancelled ? { totalPrice } : {}),
           updatedAt: new Date().toISOString(),
         })
         .where(eq(bookings.id, bookingId));
