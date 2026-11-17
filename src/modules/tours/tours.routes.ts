@@ -17,6 +17,9 @@ import {
   toPublicUploadPath,
   writeUpload,
 } from "../../shared/storage/uploads.js";
+import { BusinessRuleError } from "../../shared/errors/domain-errors.js";
+
+const BROCHURE_TOO_LARGE = "El folleto no debe pesar más de 5 MB";
 
 /** Código de Postgres de una violación de restricción (unique, FK), si el error lo trae. */
 const pgCode = (error: unknown): string | undefined =>
@@ -154,11 +157,11 @@ export async function tourRoutes(app: FastifyInstance) {
         const fileName = `${brochureFilePrefix(tourId)}${Date.now()}.pdf`;
         savedPath = await writeUpload("brochures", fileName, data.file);
 
-        if (data.file.truncated) {
-          return reply.status(400).send({ error: "El folleto no debe pesar más de 5 MB" });
-        }
+        // Con el archivo ya en disco, el rechazo se lanza (no `reply.send`): así el `finally` lo
+        // borra ANTES de que salga la respuesta.
+        if (data.file.truncated) throw new BusinessRuleError(BROCHURE_TOO_LARGE);
         if (!(await hasFileSignature(savedPath, "pdf"))) {
-          return reply.status(400).send({ error: "El archivo debe ser un PDF válido" });
+          throw new BusinessRuleError("El archivo debe ser un PDF válido");
         }
 
         const { tour, previousBrochureUrl } = await TourService.updateBrochureUrl(
@@ -172,7 +175,7 @@ export async function tourRoutes(app: FastifyInstance) {
         return reply.status(200).send({ data: tour });
       } catch (error) {
         if (pgCode(error) === "FST_REQ_FILE_TOO_LARGE") {
-          return reply.status(400).send({ error: "El folleto no debe pesar más de 5 MB" });
+          throw new BusinessRuleError(BROCHURE_TOO_LARGE);
         }
         throw error;
       } finally {

@@ -17,6 +17,7 @@ import {
   writeUpload,
   type FileKind,
 } from "../../shared/storage/uploads.js";
+import { BusinessRuleError } from "../../shared/errors/domain-errors.js";
 
 /** Logotipo: PNG o JPEG (jsPDF no puede insertar SVG en el comprobante), máximo 2 MB. */
 const LOGO_MIME_EXTENSIONS: Record<string, FileKind> = { "image/png": "png", "image/jpeg": "jpg" };
@@ -120,10 +121,11 @@ export async function agencyRoute(app: FastifyInstance) {
       const fileName = `agency-${agencyId}-${Date.now()}.${kind}`;
       savedPath = await writeUpload("logos", fileName, file.file);
 
-      if (file.file.truncated) return reply.status(400).send({ error: LOGO_TOO_LARGE });
-      if (!(await hasFileSignature(savedPath, kind))) {
-        return reply.status(400).send({ error: LOGO_INVALID });
-      }
+      // Con el archivo ya en disco, el rechazo se lanza (no `reply.send`): así el `finally` lo borra
+      // ANTES de que salga la respuesta. Con `send` el 400 se enviaba primero y el archivo seguía en
+      // disco unos instantes (pruebas intermitentes que cuentan archivos).
+      if (file.file.truncated) throw new BusinessRuleError(LOGO_TOO_LARGE);
+      if (!(await hasFileSignature(savedPath, kind))) throw new BusinessRuleError(LOGO_INVALID);
 
       const { previousLogoPath } = await AgencyBrandingService.setLogoPath(
         agencyId,
@@ -136,7 +138,7 @@ export async function agencyRoute(app: FastifyInstance) {
       return reply.status(200).send({ data: branding });
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "FST_REQ_FILE_TOO_LARGE") {
-        return reply.status(400).send({ error: LOGO_TOO_LARGE });
+        throw new BusinessRuleError(LOGO_TOO_LARGE);
       }
       throw error;
     } finally {
