@@ -232,6 +232,13 @@
       "when": 1794883123742,
       "tag": "0032_drop_unused_seat_status_and_tour_is_active",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794886235569,
+      "tag": "0033_phone_country_columns",
+      "breakpoints": true
     }
   ]
 }

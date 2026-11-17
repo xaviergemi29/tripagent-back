@@ -14,7 +14,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "tenant:create": "tsx src/db/seed-admin.ts",
-    "vehicle-templates:sync": "tsx src/db/sync-vehicle-templates.ts"
+    "vehicle-templates:sync": "tsx src/db/sync-vehicle-templates.ts",
+    "phones:normalize": "tsx src/db/normalize-phones.ts"
   },
   "keywords": [],
   "author": "",
@@ -43,6 +44,7 @@
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.12.7",
     "fastify-type-provider-zod": "^7.0.0",
+    "libphonenumber-js": "1.13.15",
     "postgres": "^3.4.9",
     "zod": "^4.6.7"
   }

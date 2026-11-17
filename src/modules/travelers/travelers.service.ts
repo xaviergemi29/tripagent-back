@@ -1,4 +1,18 @@
-import { ilike, or, count, desc, eq, and, isNull, sql, getTableColumns } from "drizzle-orm";
+import {
+  ilike,
+  or,
+  count,
+  desc,
+  eq,
+  and,
+  inArray,
+  isNull,
+  ne,
+  sql,
+  getTableColumns,
+} from "drizzle-orm";
+import { phoneLookupCandidates } from "../../shared/utils/phone.util.js";
+import { ConflictError } from "../../shared/errors/domain-errors.js";
 import { db } from "../../db/index.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
 import { bookingPassengers, bookings, tours, travelers } from "../../db/schema.js";
@@ -7,6 +21,26 @@ import type {
   UpdateTravelerBody,
   CreateTravelerBody,
 } from "./travelers.schema.js";
+
+/** Mensaje del 409 por WhatsApp repetido (el mismo que el del índice único en las rutas). */
+const DUPLICATE_PHONE_MESSAGE = "Ya existe un viajero registrado con ese WhatsApp";
+
+/**
+ * Mientras convivan el E.164 y los 10 dígitos anteriores, el índice único (agencia, WhatsApp) no
+ * detecta que `+522281234567` y `2281234567` son el mismo número: se revisa aquí (→ 409).
+ */
+async function assertPhoneAvailable(e164: string, agencyId: string, exceptId?: string) {
+  const duplicate = await db.query.travelers.findFirst({
+    where: and(
+      eq(travelers.agencyId, agencyId),
+      inArray(travelers.whatsappPhone, phoneLookupCandidates(e164)),
+      isNull(travelers.deletedAt),
+      exceptId ? ne(travelers.id, exceptId) : undefined,
+    ),
+    columns: { id: true },
+  });
+  if (duplicate) throw new ConflictError(DUPLICATE_PHONE_MESSAGE);
+}
 
 export class TravelerService {
   /**
@@ -17,7 +51,8 @@ export class TravelerService {
   static async findSingleTravelerByPhone(phone: string, agencyId: string) {
     return db.query.travelers.findFirst({
       where: and(
-        eq(travelers.whatsappPhone, phone),
+        // `phone` ya viene en E.164; también se buscan los 10 dígitos de registros anteriores.
+        inArray(travelers.whatsappPhone, phoneLookupCandidates(phone)),
         eq(travelers.agencyId, agencyId),
         isNull(travelers.deletedAt),
       ),
@@ -32,6 +67,7 @@ export class TravelerService {
   }
 
   static async createTraveler(body: CreateTravelerBody, agencyId: string) {
+    if (body.whatsappPhone) await assertPhoneAvailable(body.whatsappPhone, agencyId);
     const [createdTraveler] = await db
       .insert(travelers)
       .values({ ...body, agencyId })
@@ -163,9 +199,21 @@ export class TravelerService {
    * Ejecuta una sola consulta atómica usando la cláusula RETURNING de PostgreSQL.
    */
   static async updateTraveler(id: string, params: UpdateTravelerBody, agencyId: string) {
+    if (params.whatsappPhone) await assertPhoneAvailable(params.whatsappPhone, agencyId, id);
     const [updatedTraveler] = await db
       .update(travelers)
-      .set({ ...params, updatedAt: new Date().toISOString() })
+      .set({
+        ...params,
+        // Un número nuevo sin país (cliente anterior) queda sin confirmar: nunca conserva el país
+        // del número que reemplaza.
+        ...(params.whatsappPhone !== undefined && {
+          whatsappCountry: params.whatsappCountry ?? null,
+        }),
+        ...(params.emergencyContactPhone !== undefined && {
+          emergencyContactCountry: params.emergencyContactCountry ?? null,
+        }),
+        updatedAt: new Date().toISOString(),
+      })
       .where(
         and(eq(travelers.id, id), eq(travelers.agencyId, agencyId), isNull(travelers.deletedAt)),
       )

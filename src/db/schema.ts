@@ -73,7 +73,11 @@ export type CustomFields = Record<string, unknown>;
 export const agencies = pgTable("agencies", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: varchar("name", { length: 255 }).notNull(),
+  // WhatsApp oficial en E.164 (+522281234567). Registros anteriores pueden tener 10 dígitos hasta
+  // correr `npm run phones:normalize` (shared/utils/phone.util.ts).
   phone: varchar("phone", { length: 20 }),
+  // País del teléfono (ISO 3166-1 alfa-2: MX, US, CA…). Nulo = lada inferida, sin confirmar.
+  phoneCountry: varchar("phone_country", { length: 2 }),
   // Ruta del archivo físico del logotipo (PNG/JPEG) dentro de public/, p. ej.
   // "/uploads/logos/agency-<id>-<ts>.png". Se sirve en <origen API>/public/… (sin /api).
   // Se sube desde Configuración (POST /agencies/logo); no es una URL externa.
@@ -158,11 +162,16 @@ export const travelers = pgTable(
       .notNull(),
 
     fullName: varchar("full_name", { length: 255 }).notNull(),
+    // Teléfonos en E.164 (+522281234567) + país ISO alfa-2 (distingue +1 EE. UU. / Canadá).
+    // País nulo = lada inferida y sin confirmar (registros anteriores al selector de lada).
     whatsappPhone: varchar("whatsapp_phone", { length: 20 }),
+    whatsappCountry: varchar("whatsapp_country", { length: 2 }),
     email: varchar("email", { length: 255 }),
 
     emergencyContactName: varchar("emergency_contact_name", { length: 255 }).notNull(),
+    // "" mientras el viajero no llena su formulario (el dashboard lo usa como "pendiente").
     emergencyContactPhone: varchar("emergency_contact_phone", { length: 20 }).notNull(),
+    emergencyContactCountry: varchar("emergency_contact_country", { length: 2 }),
     medicalNotes: text("medical_notes"),
     birthDate: date("birth_date"),
 

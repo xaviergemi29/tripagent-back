@@ -2,31 +2,41 @@ import { z } from "zod";
 import { baseTravelerSchema } from "../travelers/travelers.schema.js";
 import { PASSENGER_TYPE } from "../../db/schema.js";
 import { PASSENGER_ROLE, PASSENGER_ROLES } from "../../shared/constants/domain.constants.js";
+import {
+  optionalPhoneSchema,
+  phoneCountrySchema,
+  phoneSchema,
+  refinePhoneCountry,
+} from "../../shared/schemas/phone.schema.js";
+import { refineTravelerPhones } from "../travelers/travelers.schema.js";
 
 const emptyToUndefined = z
   .union([z.string(), z.literal("")])
   .optional()
   .transform((val) => (!val || val.trim() === "" ? undefined : val.trim()));
 
-export const mainClientSchema = baseTravelerSchema.extend({
-  whatsappPhone: z.string().regex(/^(\+)?\d{10}$/, "Debe ser un WhatsApp válido"),
-  email: z.email("Correo electrónico inválido").trim(),
-  birthDate: emptyToUndefined,
-  boardingPoint: z.string().min(1, "Debes seleccionar en qué punto subirás al autobús"),
-});
+export const mainClientSchema = baseTravelerSchema
+  .extend({
+    whatsappPhone: phoneSchema,
+    email: z.email("Correo electrónico inválido").trim(),
+    birthDate: emptyToUndefined,
+    boardingPoint: z.string().min(1, "Debes seleccionar en qué punto subirás al autobús"),
+  })
+  .superRefine(refineTravelerPhones);
 
 const companionSchema = baseTravelerSchema
   .extend({
     id: z.uuid("ID inválido").optional(),
     passengerType: z.enum(["ADULT", "CHILD"]).default("ADULT"),
-    whatsappPhone: emptyToUndefined,
+    whatsappPhone: optionalPhoneSchema,
     email: emptyToUndefined,
     birthDate: emptyToUndefined,
     boardingPoint: z.string().min(1, "Debes seleccionar en qué punto subirás al autobús"),
   })
   .superRefine((data, ctx) => {
+    refineTravelerPhones(data, ctx);
     if (data.passengerType === PASSENGER_TYPE.enumValues[0]) {
-      if (!data.whatsappPhone || !/^(\+)?\d{10}$/.test(data.whatsappPhone)) {
+      if (!data.whatsappPhone) {
         ctx.addIssue({
           code: "custom",
           path: ["whatsappPhone"],
@@ -66,36 +76,40 @@ export const publicRegisterBodySchema = createBookingBodySchema.extend({
   privacyNoticeAccepted: z.literal(true, "Debes aceptar el aviso de privacidad para continuar"),
 });
 
-export const newReservationBookingSchema = z.object({
-  fullName: z.string().trim().min(3, "El nombre es requerido").max(255),
-  whatsapp: z
-    .string()
-    .trim()
-    .regex(/^(\+)?\d{10}$/, "Ingresa un número válido"),
-  email: z.email("Correo electrónico inválido"),
-  numberPassengers: z
-    .number()
-    .int("Los lugares deben ser un número entero")
-    .min(1, "Debe apartar al menos 1 lugar"),
-});
+export const newReservationBookingSchema = z
+  .object({
+    fullName: z.string().trim().min(3, "El nombre es requerido").max(255),
+    whatsapp: phoneSchema,
+    whatsappCountry: phoneCountrySchema,
+    email: z.email("Correo electrónico inválido"),
+    numberPassengers: z
+      .number()
+      .int("Los lugares deben ser un número entero")
+      .min(1, "Debe apartar al menos 1 lugar"),
+  })
+  .superRefine((data, ctx) =>
+    refinePhoneCountry(ctx, data.whatsapp, data.whatsappCountry, "whatsapp"),
+  );
 
 /** Pre-reserva pública desde el folleto ("Iniciar Reserva"). Sin email: el cliente lo da al registrarse. */
-export const publicPreBookingBodySchema = z.object({
-  tourId: z.uuid("El ID del tour debe ser un UUID válido"),
-  fullName: z
-    .string()
-    .trim()
-    .min(3, "El nombre es requerido")
-    .max(150, "El nombre es demasiado largo"),
-  whatsapp: z
-    .string()
-    .trim()
-    .regex(/^(\+)?\d{10}$/, "Ingresa un número válido"),
-  numberPassengers: z
-    .number()
-    .int("Los lugares deben ser un número entero")
-    .min(1, "Debe apartar al menos 1 lugar"),
-});
+export const publicPreBookingBodySchema = z
+  .object({
+    tourId: z.uuid("El ID del tour debe ser un UUID válido"),
+    fullName: z
+      .string()
+      .trim()
+      .min(3, "El nombre es requerido")
+      .max(150, "El nombre es demasiado largo"),
+    whatsapp: phoneSchema,
+    whatsappCountry: phoneCountrySchema,
+    numberPassengers: z
+      .number()
+      .int("Los lugares deben ser un número entero")
+      .min(1, "Debe apartar al menos 1 lugar"),
+  })
+  .superRefine((data, ctx) =>
+    refinePhoneCountry(ctx, data.whatsapp, data.whatsappCountry, "whatsapp"),
+  );
 
 export const tourByIdParamsSchema = z.object({
   id: z.uuid("El ID del tour debe ser un UUID válido"),
@@ -124,7 +138,7 @@ export const cancelFullBookingBodySchema = z.object({
 /**
  * Transferencia de un lugar (titular o acompañante) a otra persona.
  * `passengerId` es el `travelerId` que expone el Centro de Control por pasajero.
- * Adultos: WhatsApp (10 dígitos) y correo obligatorios. Menores: WhatsApp opcional, sin correo.
+ * Adultos: WhatsApp (E.164 + país) y correo obligatorios. Menores: WhatsApp opcional, sin correo.
  * El titular siempre es adulto (responsable financiero y dueño del Magic Link).
  */
 export const transferPassengerBodySchema = z
@@ -136,7 +150,8 @@ export const transferPassengerBodySchema = z
       .trim()
       .min(3, "El nombre debe tener al menos 3 caracteres")
       .max(255, "El nombre es demasiado largo"),
-    whatsapp: emptyToUndefined,
+    whatsapp: optionalPhoneSchema,
+    whatsappCountry: phoneCountrySchema,
     email: emptyToUndefined,
     isMinor: z.boolean().default(false),
     // Solo acompañantes: toma el punto de abordaje del titular en lugar de conservar el del lugar.
@@ -144,7 +159,8 @@ export const transferPassengerBodySchema = z
     // Acordeón opcional "Datos médicos y de emergencia".
     medicalNotes: emptyToUndefined,
     emergencyContactName: emptyToUndefined,
-    emergencyContactPhone: emptyToUndefined,
+    emergencyContactPhone: optionalPhoneSchema,
+    emergencyContactCountry: phoneCountrySchema,
   })
   .superRefine((data, ctx) => {
     if (data.role === PASSENGER_ROLE.TITULAR && data.isMinor) {
@@ -154,13 +170,13 @@ export const transferPassengerBodySchema = z
         message: "El titular debe ser un adulto (es el responsable financiero)",
       });
     }
-    if (data.whatsapp !== undefined && !/^\d{10}$/.test(data.whatsapp)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["whatsapp"],
-        message: "Debe ser un número exactamente a 10 dígitos",
-      });
-    }
+    refinePhoneCountry(ctx, data.whatsapp, data.whatsappCountry, "whatsapp");
+    refinePhoneCountry(
+      ctx,
+      data.emergencyContactPhone,
+      data.emergencyContactCountry,
+      "emergencyContactPhone",
+    );
     if (!data.isMinor) {
       if (data.whatsapp === undefined) {
         ctx.addIssue({
@@ -176,13 +192,6 @@ export const transferPassengerBodySchema = z
           message: "El correo electrónico es obligatorio para adultos",
         });
       }
-    }
-    if (data.emergencyContactPhone !== undefined && !/^\d{10}$/.test(data.emergencyContactPhone)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["emergencyContactPhone"],
-        message: "Debe ser un número de emergencia exactamente a 10 dígitos",
-      });
     }
   });
 

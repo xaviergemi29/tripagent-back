@@ -2,6 +2,7 @@ import { db } from "../db/index.js";
 import { agencies, agencyUsers } from "../db/schema.js";
 import bcrypt from "bcryptjs";
 import { parseArgs } from "node:util";
+import { isPhoneCountry, normalizePhone } from "../shared/utils/phone.util.js";
 
 /**
  * 🚀 Script CLI de Aprovisionamiento de Agencia (Tenant)
@@ -10,7 +11,7 @@ import { parseArgs } from "node:util";
  * npm run tenant:create -- \
  *   --name="Bruji Tours" \
  *   --email="contacto@brujitours.com" \
- *   --phone="2281234567" \
+ *   --phone="2281234567" --phoneCountry="MX" \
  *   --adminName="Jackie Admin" \
  *   --adminPassword="PasswordSeguro123"
  *
@@ -26,6 +27,7 @@ async function provisionTenant() {
       name: { type: "string", short: "n" },
       email: { type: "string", short: "e" },
       phone: { type: "string", short: "t" },
+      phoneCountry: { type: "string" },
       adminName: { type: "string", short: "u" },
       adminPassword: { type: "string", short: "p" },
     },
@@ -47,8 +49,23 @@ async function provisionTenant() {
         '  --email="email@agencia.com"\n' +
         '  --adminPassword="Password123"\n\n' +
         "Parámetros opcionales:\n" +
-        '  --phone="2281234567"\n' +
+        '  --phone="2281234567" (número nacional, o "+12125551234" junto con --phoneCountry="US")\n' +
+        '  --phoneCountry="MX" (país del teléfono, ISO alfa-2; por defecto MX)\n' +
         '  --adminName="Nombre Administrador"\n',
+    );
+    process.exit(1);
+  }
+
+  // Teléfono internacional (2026-11-16): se guarda en E.164 con su país.
+  const phoneCountry = (values.phoneCountry ?? "MX").toUpperCase();
+  if (!isPhoneCountry(phoneCountry)) {
+    console.error(`❌ Error: --phoneCountry="${values.phoneCountry}" no es un país válido.`);
+    process.exit(1);
+  }
+  const phoneE164 = agencyPhone ? normalizePhone(agencyPhone, phoneCountry) : null;
+  if (agencyPhone && !phoneE164) {
+    console.error(
+      `❌ Error: --phone="${agencyPhone}" no es un teléfono válido para ${phoneCountry}.`,
     );
     process.exit(1);
   }
@@ -62,7 +79,8 @@ async function provisionTenant() {
         .values({
           name: agencyName,
           email: agencyEmail.toLowerCase().trim(),
-          phone: agencyPhone || null,
+          phone: phoneE164,
+          phoneCountry: phoneE164 ? phoneCountry : null,
           subscriptionStatus: "trialing",
           isActive: true,
         })

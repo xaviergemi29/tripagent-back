@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { phoneSchema } from "../../shared/schemas/phone.schema.js";
 
 // Los tokens son 32 caracteres hex (UUID sin guiones); el límite evita consultas con basura enorme.
 export const validateTokenParamsSchema = z.object({
@@ -6,8 +7,6 @@ export const validateTokenParamsSchema = z.object({
 });
 
 export const lookupTravelerQuerySchema = z.object({
-  phone: z
-    .string()
-    .trim()
-    .regex(/^(\+)?\d{10}$/, "Ingresa un número válido"),
+  // E.164 (front actual; el "+" llega codificado como %2B) o 10 dígitos de clientes anteriores.
+  phone: phoneSchema,
 });

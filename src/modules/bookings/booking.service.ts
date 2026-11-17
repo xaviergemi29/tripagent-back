@@ -24,7 +24,12 @@ import {
   NotFoundError,
 } from "../../shared/errors/domain-errors.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
-import { fillEmptyTravelerFields } from "../../shared/utils/traveler-merge.util.js";
+import {
+  confirmLegacyPhone,
+  fillEmptyTravelerFields,
+} from "../../shared/utils/traveler-merge.util.js";
+import { isSamePhone, phoneLookupCandidates } from "../../shared/utils/phone.util.js";
+import type { CountryCode } from "libphonenumber-js";
 import { PASSENGER_ROLE, TOUR_TEMPORAL_STATUS } from "../../shared/constants/domain.constants.js";
 
 /**
@@ -44,7 +49,10 @@ const generateMagicToken = (): string => nodeCrypto.randomUUID().replace(/-/g, "
 /** Datos mínimos para apartar lugares (apartado rápido del operador o pre-reserva del folleto). */
 interface ReserveSeatsInput {
   fullName: string;
+  /** E.164 (el schema ya lo normalizó). */
   whatsapp: string;
+  /** País del número; `null`/`undefined` = sin confirmar (cliente anterior al selector de lada). */
+  whatsappCountry: CountryCode | null | undefined;
   email: string | null;
   numberPassengers: number;
 }
@@ -113,14 +121,19 @@ export class BookingService {
       const existingTitular = await tx.query.travelers.findFirst({
         where: and(
           eq(travelers.agencyId, agencyId),
-          eq(travelers.whatsappPhone, payload.mainClient.whatsappPhone),
+          // E.164 y, mientras convivan, los 10 dígitos anteriores del mismo número.
+          inArray(travelers.whatsappPhone, phoneLookupCandidates(payload.mainClient.whatsappPhone)),
           isNull(travelers.deletedAt),
         ),
       });
 
       if (existingTitular) {
-        // Solo se completan los campos vacíos del perfil (decisión del PM, 2026-11-14).
-        const patch = fillEmptyTravelerFields(existingTitular, payload.mainClient);
+        // Solo se completan los campos vacíos del perfil (decisión del PM, 2026-11-14) y, si el
+        // número era anterior al selector de lada, se confirma con el país que eligió el cliente.
+        const patch = {
+          ...fillEmptyTravelerFields(existingTitular, payload.mainClient),
+          ...confirmLegacyPhone(existingTitular, payload.mainClient),
+        };
         if (Object.keys(patch).length > 0) {
           await tx
             .update(travelers)
@@ -177,7 +190,7 @@ export class BookingService {
             ? await tx.query.travelers.findFirst({
                 where: and(
                   eq(travelers.agencyId, agencyId),
-                  eq(travelers.whatsappPhone, comp.whatsappPhone),
+                  inArray(travelers.whatsappPhone, phoneLookupCandidates(comp.whatsappPhone)),
                   isNull(travelers.deletedAt),
                 ),
               })
@@ -185,7 +198,10 @@ export class BookingService {
 
           if (existingComp) {
             // Solo se completan los campos vacíos del perfil (decisión del PM, 2026-11-14).
-            const patch = fillEmptyTravelerFields(existingComp, comp);
+            const patch = {
+              ...fillEmptyTravelerFields(existingComp, comp),
+              ...confirmLegacyPhone(existingComp, comp),
+            };
             if (Object.keys(patch).length > 0) {
               await tx
                 .update(travelers)
@@ -200,9 +216,11 @@ export class BookingService {
                 agencyId,
                 fullName: comp.fullName,
                 whatsappPhone: comp.whatsappPhone,
+                whatsappCountry: comp.whatsappPhone ? (comp.whatsappCountry ?? null) : null,
                 email: comp.email,
                 emergencyContactName: comp.emergencyContactName,
                 emergencyContactPhone: comp.emergencyContactPhone,
+                emergencyContactCountry: comp.emergencyContactCountry ?? null,
                 medicalNotes: comp.medicalNotes,
                 birthDate: comp.birthDate,
               })
@@ -308,6 +326,7 @@ export class BookingService {
       return BookingService.reserveSeats(tx, tour, {
         fullName: data.fullName,
         whatsapp: data.whatsapp,
+        whatsappCountry: data.whatsappCountry,
         email: data.email,
         numberPassengers: data.numberPassengers,
       });
@@ -344,6 +363,7 @@ export class BookingService {
       await BookingService.reserveSeats(tx, tour, {
         fullName: data.fullName,
         whatsapp: data.whatsapp,
+        whatsappCountry: data.whatsappCountry,
         email: null,
         numberPassengers: data.numberPassengers,
       });
@@ -359,7 +379,7 @@ export class BookingService {
     tour: { id: string; agencyId: string; price: number },
     data: ReserveSeatsInput,
   ) {
-    const { numberPassengers, fullName, whatsapp, email } = data;
+    const { numberPassengers, fullName, whatsapp, whatsappCountry, email } = data;
 
     // 1. Cupo atómico (bloquea la fila del tour hasta el commit) → 409 si no alcanza.
     const { availableSeats } = await BookingCapacityService.assertSeatsAvailable(
@@ -373,7 +393,7 @@ export class BookingService {
     const existingTitular = await tx.query.travelers.findFirst({
       where: and(
         eq(travelers.agencyId, tour.agencyId),
-        eq(travelers.whatsappPhone, whatsapp),
+        inArray(travelers.whatsappPhone, phoneLookupCandidates(whatsapp)),
         isNull(travelers.deletedAt),
       ),
     });
@@ -387,6 +407,7 @@ export class BookingService {
           agencyId: tour.agencyId,
           fullName,
           whatsappPhone: whatsapp,
+          whatsappCountry: whatsappCountry ?? null,
           email,
           emergencyContactName: "",
           emergencyContactPhone: "",
@@ -801,7 +822,7 @@ export class BookingService {
         ? await tx.query.travelers.findFirst({
             where: and(
               eq(travelers.agencyId, agencyId),
-              eq(travelers.whatsappPhone, whatsapp),
+              inArray(travelers.whatsappPhone, phoneLookupCandidates(whatsapp)),
               isNull(travelers.deletedAt),
             ),
           })
@@ -815,12 +836,17 @@ export class BookingService {
           .set({
             fullName: data.fullName,
             email,
+            ...confirmLegacyPhone(existingTraveler, {
+              whatsappPhone: whatsapp,
+              whatsappCountry: data.whatsappCountry,
+            }),
             ...(data.medicalNotes !== undefined && { medicalNotes: data.medicalNotes }),
             ...(data.emergencyContactName !== undefined && {
               emergencyContactName: data.emergencyContactName,
             }),
             ...(data.emergencyContactPhone !== undefined && {
               emergencyContactPhone: data.emergencyContactPhone,
+              emergencyContactCountry: data.emergencyContactCountry ?? null,
             }),
             updatedAt: now,
           })
@@ -834,10 +860,14 @@ export class BookingService {
             agencyId,
             fullName: data.fullName,
             whatsappPhone: whatsapp,
+            whatsappCountry: whatsapp ? (data.whatsappCountry ?? null) : null,
             email,
             medicalNotes: data.medicalNotes ?? null,
             emergencyContactName: data.emergencyContactName ?? "",
             emergencyContactPhone: data.emergencyContactPhone ?? "",
+            emergencyContactCountry: data.emergencyContactPhone
+              ? (data.emergencyContactCountry ?? null)
+              : null,
           })
           .returning({ id: travelers.id });
         if (!newTraveler) throw new Error("No se pudo crear el viajero");
@@ -900,7 +930,9 @@ export class BookingService {
             .set({ travelerId: targetTravelerId, updatedAt: now })
             .where(eq(bookings.id, bookingId));
         }
-        if (whatsapp !== slot.traveler.whatsappPhone) {
+        // Se comparan números normalizados: el guardado puede seguir en los 10 dígitos anteriores
+        // y el capturado llega en E.164; compararlos como texto regeneraba el token por error.
+        if (!isSamePhone(whatsapp, slot.traveler.whatsappPhone)) {
           await tx
             .update(magicTokens)
             .set({ token: generateMagicToken() })

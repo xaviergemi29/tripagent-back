@@ -180,6 +180,25 @@ describe("PATCH /api/bookings/:bookingId/transfer", () => {
     assert.ok(!("medicalNotes" in updates.find((u) => u.table === "travelers")!.set));
   });
 
+  it("titular con el mismo número en E.164 (guardado con 10 dígitos): no regenera y confirma la lada", async () => {
+    const { updates } = fakeTransaction({
+      slot: titularSlot,
+      existingTraveler: { id: TITULAR_ID },
+    });
+
+    const res = await transfer({
+      ...titularPayload,
+      whatsapp: "+522281111111",
+      whatsappCountry: "MX",
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().data.tokenRegenerated, false);
+    const travelerSet = updates.find((u) => u.table === "travelers")!.set;
+    assert.equal(travelerSet.whatsappPhone, "+522281111111");
+    assert.equal(travelerSet.whatsappCountry, "MX");
+  });
+
   it("acompañante menor sin WhatsApp: viajero nuevo CHILD, hereda el abordaje del titular, sin token", async () => {
     const { updates, inserts } = fakeTransaction({ slot: companionSlot });
 

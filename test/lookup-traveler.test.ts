@@ -57,8 +57,9 @@ describe("GET /api/magic-tokens/:token/lookup-traveler (ruta pública)", () => {
       emergencyContactPhone: travelerRow.emergencyContactPhone,
       birthDate: travelerRow.birthDate,
     });
-    // La búsqueda se limita a la agencia del token, no a una enviada por el cliente.
-    assert.deepEqual(find.mock.calls[0]?.arguments, [travelerRow.whatsappPhone, AGENCY_A]);
+    // La búsqueda se limita a la agencia del token, no a una enviada por el cliente. Los 10 dígitos
+    // de un cliente anterior llegan al servicio ya normalizados a E.164 (México).
+    assert.deepEqual(find.mock.calls[0]?.arguments, ["+525512345678", AGENCY_A]);
   });
 
   it("no expone notas médicas, teléfono ni datos internos", async () => {

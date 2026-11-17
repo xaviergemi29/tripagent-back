@@ -27,7 +27,12 @@ export class Agency {
   static async updateAgency(agencyId: string, body: UpdateAgencyBody) {
     const [agencyUpdated] = await db
       .update(agencies)
-      .set({ ...body, updatedAt: new Date().toISOString() })
+      .set({
+        ...body,
+        // El teléfono siempre viaja en el cuerpo: sin país (cliente anterior) queda sin confirmar.
+        phoneCountry: body.phoneCountry ?? null,
+        updatedAt: new Date().toISOString(),
+      })
       .where(eq(agencies.id, agencyId))
       .returning();
 

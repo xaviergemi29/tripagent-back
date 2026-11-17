@@ -101,10 +101,13 @@ export class MagicTokenService {
         prefillData: traveler
           ? {
               fullName: traveler.fullName || "",
+              // E.164 (o 10 dígitos de registros anteriores) + país; país nulo = sin confirmar.
               whatsappPhone: traveler.whatsappPhone || "",
+              whatsappCountry: traveler.whatsappCountry ?? null,
               email: traveler.email || "",
               emergencyContactName: traveler.emergencyContactName || "",
               emergencyContactPhone: traveler.emergencyContactPhone || "",
+              emergencyContactCountry: traveler.emergencyContactCountry ?? null,
               // Las notas médicas (dato sensible, LFPDPPP) no viajan en el enlace público, igual que
               // en lookup-traveler: si el viajero ya las tenía se conservan (solo se completan los
               // campos vacíos al registrar, `fillEmptyTravelerFields`).

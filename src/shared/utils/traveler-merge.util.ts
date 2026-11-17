@@ -11,6 +11,7 @@ export interface TravelerProfileFields {
   email?: string | null | undefined;
   emergencyContactName?: string | null | undefined;
   emergencyContactPhone?: string | null | undefined;
+  emergencyContactCountry?: string | null | undefined;
   medicalNotes?: string | null | undefined;
   birthDate?: string | null | undefined;
 }
@@ -37,13 +38,35 @@ const isBlank = (value: string | null | undefined): boolean => {
 export function fillEmptyTravelerFields(
   existing: TravelerProfileFields,
   incoming: TravelerProfileFields,
-): Partial<Record<(typeof PROFILE_KEYS)[number], string>> {
-  const patch: Partial<Record<(typeof PROFILE_KEYS)[number], string>> = {};
+): Partial<Record<(typeof PROFILE_KEYS)[number] | "emergencyContactCountry", string>> {
+  const patch: Partial<Record<(typeof PROFILE_KEYS)[number] | "emergencyContactCountry", string>> =
+    {};
   for (const key of PROFILE_KEYS) {
     const next = incoming[key];
     if (isBlank(existing[key]) && !isBlank(next)) {
       patch[key] = (next as string).trim();
     }
   }
+  // El país del teléfono de emergencia acompaña a su número: solo se escribe si el número se completó.
+  if (patch.emergencyContactPhone && incoming.emergencyContactCountry) {
+    patch.emergencyContactCountry = incoming.emergencyContactCountry;
+  }
   return patch;
+}
+
+/**
+ * Confirma la lada de un WhatsApp anterior al selector de país (2026-11-16): si el viajero
+ * encontrado no tiene país (`whatsappCountry` nulo = lada inferida) y quien captura sí lo eligió,
+ * se guardan el país y el número en E.164. Es el **mismo número** (la búsqueda ya lo comparó), así
+ * que no cambia la identidad del viajero; un país ya confirmado nunca se sobrescribe.
+ */
+export function confirmLegacyPhone(
+  existing: { whatsappCountry?: string | null | undefined },
+  incoming: {
+    whatsappPhone?: string | null | undefined;
+    whatsappCountry?: string | null | undefined;
+  },
+): { whatsappPhone?: string; whatsappCountry?: string } {
+  if (existing.whatsappCountry || !incoming.whatsappCountry || !incoming.whatsappPhone) return {};
+  return { whatsappPhone: incoming.whatsappPhone, whatsappCountry: incoming.whatsappCountry };
 }

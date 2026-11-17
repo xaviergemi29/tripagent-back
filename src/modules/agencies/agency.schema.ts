@@ -1,13 +1,17 @@
 import z from "zod";
 import { SUBSCRIPTION_STATUS } from "../../db/schema.js";
 import { policiesTextSchema } from "../../shared/schemas/policies.schema.js";
+import {
+  phoneCountrySchema,
+  phoneSchema,
+  refinePhoneCountry,
+} from "../../shared/schemas/phone.schema.js";
 
 export const baseAgencySchema = z.object({
   name: z.string().trim().min(3, "La agencia debe tener al menos 3 caracteres").max(255),
-  phone: z
-    .string()
-    .trim()
-    .regex(/^(\+)?\d{10,19}$/, "El teléfono debe contener solo números (mínimo 10 dígitos)"),
+  // WhatsApp oficial: E.164 + país (2026-11-16; antes solo dígitos con un "+52" visual).
+  phone: phoneSchema,
+  phoneCountry: phoneCountrySchema,
   email: z.email("Correo electrónico inválido").max(255),
   subscriptionStatus: z.enum(SUBSCRIPTION_STATUS.enumValues).default("trialing"),
   isActive: z.boolean().default(true),
@@ -53,10 +57,12 @@ export const baseAgencySchema = z.object({
  * operador podía activar su suscripción o extender su prueba desde la API. La facturación la
  * administra TripAgent (alta por CLI). Zod descarta esas claves si llegan en el cuerpo.
  */
-export const updateAgencyBodySchema = baseAgencySchema.omit({
-  subscriptionStatus: true,
-  isActive: true,
-});
+export const updateAgencyBodySchema = baseAgencySchema
+  .omit({
+    subscriptionStatus: true,
+    isActive: true,
+  })
+  .superRefine((data, ctx) => refinePhoneCountry(ctx, data.phone, data.phoneCountry, "phone"));
 
 // ----------------------------------------------------------------------------
 // Identidad visual (agency_branding). El logotipo NO viaja aquí: se sube como archivo
