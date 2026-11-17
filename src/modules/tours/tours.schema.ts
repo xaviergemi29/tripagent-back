@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isPastDate, PAST_DEPARTURE_ERROR } from "../../shared/utils/mexico-date.util.js";
 import { CURRENCIES, DESTINATION_TYPE, TOUR_MODALITIES } from "../../db/schema.js";
 import {
   TOUR_CANCELLATION_NOTE_MAX_LENGTH,
@@ -161,7 +162,11 @@ export const createTourBodySchema = withTourRefinements(
     acceptsCreditCard: baseTourSchema.shape.acceptsCreditCard.default(false),
     acceptsCash: baseTourSchema.shape.acceptsCash.default(false),
   }),
-);
+  // Un tour nuevo no sale en el pasado (2026-11-17): con un año mal elegido nacía FINALIZADO.
+).refine((body) => !isPastDate(body.departureDateTime), {
+  path: ["departureDateTime"],
+  message: PAST_DEPARTURE_ERROR,
+});
 export const updateTourBodySchema = withTourRefinements(baseTourSchema.partial()).extend({
   removeBrochure: z.boolean().optional(),
 });

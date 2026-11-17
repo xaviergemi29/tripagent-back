@@ -42,6 +42,7 @@ import { BookingCapacityService } from "../bookings/booking-capacity.service.js"
 import { BookingStatusService } from "../bookings/booking-status.service.js";
 import { FROZEN_PRICING_ERROR, STAFF_CAPACITY_ERROR } from "./tours.schema.js";
 import { removeUpload } from "../../shared/storage/uploads.js";
+import { isPastDate, PAST_DEPARTURE_ERROR } from "../../shared/utils/mexico-date.util.js";
 
 /** Prefijo de los archivos de folleto de un tour: un tour solo puede borrar SUS folletos. */
 export const brochureFilePrefix = (tourId: string) => `tour-${tourId}-`;
@@ -182,11 +183,22 @@ export class TourService {
           currency: tours.currency,
           depositPerPerson: tours.depositPerPerson,
           brochureUrl: tours.brochureUrl,
+          departureDateTime: tours.departureDateTime,
         })
         .from(tours)
         .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
         .for("update");
       if (!current) return undefined;
+
+      // La salida no se mueve al pasado (2026-11-17): un tour con reservas pasaría a FINALIZADO.
+      // Conservar la fecha guardada (aunque ya haya pasado) sí se permite.
+      if (
+        restData.departureDateTime !== undefined &&
+        restData.departureDateTime !== current.departureDateTime &&
+        isPastDate(restData.departureDateTime)
+      ) {
+        throw new BusinessRuleError(PAST_DEPARTURE_ERROR);
+      }
 
       if (restData.maxCapacity !== undefined || restData.staffCapacity !== undefined) {
         const maxCapacity = restData.maxCapacity ?? current.maxCapacity;
@@ -453,12 +465,40 @@ export class TourService {
 
       // Bloquea la fila del tour: ninguna reserva cambia de cupo mientras se valida.
       const [tour] = await tx
-        .select({ id: tours.id, price: tours.price, depositPerPerson: tours.depositPerPerson })
+        .select({
+          id: tours.id,
+          price: tours.price,
+          depositPerPerson: tours.depositPerPerson,
+          vehicleId: tours.vehicleId,
+          departureDateTime: tours.departureDateTime,
+          returnDate: tours.returnDate,
+          cancelledAt: tours.cancelledAt,
+        })
         .from(tours)
         .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
         .for("update");
       if (!tour) {
         throw new NotFoundError("Tour no encontrado o sin permisos");
+      }
+
+      // La unidad solo se cambia mientras el tour es PRÓXIMO (petición del usuario, 2026-11-17): uno
+      // EN CURSO ya salió en su vehículo y uno FINALIZADO o CANCELADO es de solo lectura. Asignar la
+      // primera unidad (sin vehículo) o la misma sigue permitido.
+      const temporalStatus = getTourTemporalStatus(
+        tour.departureDateTime,
+        tour.cancelledAt,
+        tour.returnDate,
+      );
+      if (
+        temporalStatus !== TOUR_TEMPORAL_STATUS.UPCOMING &&
+        tour.vehicleId &&
+        tour.vehicleId !== vehicleId
+      ) {
+        throw new ConflictError(
+          temporalStatus === TOUR_TEMPORAL_STATUS.IN_PROGRESS
+            ? "El tour ya está en curso: no se puede cambiar de vehículo."
+            : "El tour ya finalizó o fue cancelado: no se puede cambiar de vehículo.",
+        );
       }
 
       const seatLabels = getLayoutSeatLabels(vehicle.layoutMap ?? []);

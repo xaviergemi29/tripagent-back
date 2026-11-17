@@ -261,6 +261,7 @@ describe("Magic Link: el registro del grupo solo se acepta una vez", () => {
       email: "intruso@mail.com",
       emergencyContactName: "Alguien",
       emergencyContactPhone: "2281111111",
+      birthDate: "1988-02-14",
       boardingPoint: "Plaza (06:00)",
     },
     hasCompanions: false,

@@ -64,6 +64,7 @@ describe("A1 y A2. Registro público del Magic Link", () => {
       email: "nuevo@correo.mx",
       emergencyContactName: "Luis Torres",
       emergencyContactPhone: "2281112222",
+      birthDate: "1990-05-01",
       boardingPoint: "Plaza (06:00)",
     },
     hasCompanions: false,

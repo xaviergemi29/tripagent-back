@@ -305,7 +305,8 @@ describe("Cupo y sobreventa", () => {
       title: "Cascadas de Cuetzalan",
       price: 1200,
       depositPerPerson: 0,
-      departureDateTime: "2026-11-22",
+      // Siempre en el futuro: un tour nuevo no puede salir antes de hoy (2026-11-17).
+      departureDateTime: new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10),
       maxCapacity: 20,
       acceptsCash: true,
       cashInstructions: "Paga directo al abordar",

@@ -325,7 +325,11 @@ describe("Ciclo de vida del tour", () => {
     // Grupo de 4 SIN anticipo cubierto: no cuenta para el candado.
     const unpaidGroupOf4 = { totalPrice: 4000, amountPaid: 0, magicToken: { numberPassengers: 4 } };
 
-    function vehicleTx(layoutMap: (string | null)[][], released: unknown[] = []) {
+    function vehicleTx(
+      layoutMap: (string | null)[][],
+      released: unknown[] = [],
+      tour: Record<string, unknown> = tourRow,
+    ) {
       let updates = 0;
       const update = mock.fn(() => ({
         set: () => chain(updates++ === 0 ? [{ id: TOUR_ID, vehicleId: VEHICLE_ID }] : released),
@@ -336,7 +340,7 @@ describe("Ciclo de vida del tour", () => {
           vehicles: { findFirst: async () => ({ layoutMap }) },
           bookings: { findMany: async () => [paidGroupOf3, unpaidGroupOf4] },
         },
-        select: () => chain([tourRow]),
+        select: () => chain([tour]),
         update,
         delete: del,
       });
@@ -381,6 +385,70 @@ describe("Ciclo de vida del tour", () => {
 
       assert.equal(res.statusCode, 200);
       assert.deepEqual(res.json().data.releasedSeats, { passengers: 1, blocked: 1 });
+    });
+
+    // Solo se cambia de unidad mientras el tour es PRÓXIMO (petición del usuario, 2026-11-17).
+    const shiftDays = (days: number) => {
+      const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" });
+      const d = new Date(`${today}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + days);
+      return d.toISOString().slice(0, 10);
+    };
+    const bigLayout = [
+      ["01", "02", "AISLE", "03"],
+      [null, "04", "AISLE", "05"],
+    ];
+
+    for (const [label, overrides, message] of [
+      [
+        "EN CURSO",
+        { departureDateTime: shiftDays(-1), returnDate: shiftDays(1) },
+        /ya está en curso/,
+      ],
+      ["FINALIZADO", { departureDateTime: shiftDays(-10), returnDate: shiftDays(-8) }, /finalizó/],
+      [
+        "CANCELADO",
+        { departureDateTime: shiftDays(5), cancelledAt: "2026-11-14T10:00:00.000Z" },
+        /cancelado/,
+      ],
+    ] as const) {
+      it(`tour ${label} con unidad → 409 al cambiarla, sin escribir`, async () => {
+        const { update, del } = vehicleTx(bigLayout, [], {
+          ...tourRow,
+          vehicleId: "otra-unidad",
+          ...overrides,
+        });
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/tours/${TOUR_ID}/vehicle`,
+          cookies: cookies(),
+          payload: { vehicleId: VEHICLE_ID },
+        });
+
+        assert.equal(res.statusCode, 409);
+        assert.match(res.json().error, message);
+        assert.equal(update.mock.callCount(), 0);
+        assert.equal(del.mock.callCount(), 0);
+      });
+    }
+
+    it("tour EN CURSO sin unidad todavía → sí se puede asignar la primera", async () => {
+      vehicleTx(bigLayout, [], {
+        ...tourRow,
+        vehicleId: null,
+        departureDateTime: shiftDays(0),
+        returnDate: shiftDays(1),
+      });
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/tours/${TOUR_ID}/vehicle`,
+        cookies: cookies(),
+        payload: { vehicleId: VEHICLE_ID },
+      });
+
+      assert.equal(res.statusCode, 200);
     });
   });
 

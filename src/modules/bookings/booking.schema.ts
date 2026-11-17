@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  BIRTH_DATE_REQUIRED_ERROR,
+  FUTURE_BIRTH_DATE_ERROR,
+  isFutureDate,
+} from "../../shared/utils/mexico-date.util.js";
 import { baseTravelerSchema } from "../travelers/travelers.schema.js";
 import { PASSENGER_TYPE } from "../../db/schema.js";
 import { PASSENGER_ROLE, PASSENGER_ROLES } from "../../shared/constants/domain.constants.js";
@@ -10,6 +15,21 @@ import {
 } from "../../shared/schemas/phone.schema.js";
 import { refineTravelerPhones } from "../travelers/travelers.schema.js";
 
+/**
+ * Fecha de nacimiento del registro del Magic Link: obligatoria (seguro carretero, igual que "Editar
+ * viajero") y no futura. Hasta el 2026-11-17 se aceptaba vacía (petición del usuario).
+ */
+const requiredBirthDate = z
+  .string(BIRTH_DATE_REQUIRED_ERROR)
+  .trim()
+  .min(1, BIRTH_DATE_REQUIRED_ERROR)
+  .pipe(
+    z
+      .string()
+      .date("Debe ser formato YYYY-MM-DD")
+      .refine((date) => !isFutureDate(date), FUTURE_BIRTH_DATE_ERROR),
+  );
+
 const emptyToUndefined = z
   .union([z.string(), z.literal("")])
   .optional()
@@ -19,7 +39,7 @@ export const mainClientSchema = baseTravelerSchema
   .extend({
     whatsappPhone: phoneSchema,
     email: z.email("Correo electrónico inválido").trim(),
-    birthDate: emptyToUndefined,
+    birthDate: requiredBirthDate,
     boardingPoint: z.string().min(1, "Debes seleccionar en qué punto subirás al autobús"),
   })
   .superRefine(refineTravelerPhones);
@@ -30,7 +50,7 @@ const companionSchema = baseTravelerSchema
     passengerType: z.enum(["ADULT", "CHILD"]).default("ADULT"),
     whatsappPhone: optionalPhoneSchema,
     email: emptyToUndefined,
-    birthDate: emptyToUndefined,
+    birthDate: requiredBirthDate,
     boardingPoint: z.string().min(1, "Debes seleccionar en qué punto subirás al autobús"),
   })
   .superRefine((data, ctx) => {

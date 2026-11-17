@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FUTURE_BIRTH_DATE_ERROR, isFutureDate } from "../../shared/utils/mexico-date.util.js";
 import type { CountryCode } from "libphonenumber-js";
 import {
   phoneCountrySchema,
@@ -28,7 +29,11 @@ export const baseTravelerSchema = z.object({
   emergencyContactPhone: phoneSchema,
   emergencyContactCountry: phoneCountrySchema,
   medicalNotes: z.string().trim().optional(),
-  birthDate: z.string().date("Debe ser formato YYYY-MM-DD").optional(),
+  birthDate: z
+    .string()
+    .date("Debe ser formato YYYY-MM-DD")
+    .refine((date) => !isFutureDate(date), FUTURE_BIRTH_DATE_ERROR)
+    .optional(),
   customFields: z.record(z.string(), z.unknown()).default({}),
 });
 
