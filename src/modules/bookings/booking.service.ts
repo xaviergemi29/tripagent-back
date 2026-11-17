@@ -328,13 +328,14 @@ export class BookingService {
           agencyId: true,
           price: true,
           departureDateTime: true,
+          returnDate: true,
           cancelledAt: true,
         },
       });
       if (!tour) throw new NotFoundError("Tour no encontrado");
 
       if (
-        getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt) !==
+        getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt, tour.returnDate) !==
         TOUR_TEMPORAL_STATUS.UPCOMING
       ) {
         throw new ConflictError("Este tour ya no admite reservas en línea.");

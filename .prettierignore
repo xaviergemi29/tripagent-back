@@ -1,0 +1,5 @@
+# Generado por drizzle-kit (no se edita a mano), salida de tsc y CLAUDE.md (tablas compactas a propósito:
+# se carga en cada sesión del agente y el relleno de Prettier duplicaba su tamaño).
+drizzle/meta/
+dist/
+CLAUDE.md

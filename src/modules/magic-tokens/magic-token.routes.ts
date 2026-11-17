@@ -28,10 +28,12 @@ export async function magicTokensRoutes(app: FastifyInstance) {
         return reply.status(200).send(result);
       } catch (error) {
         // Formato propio del Magic Link (`{ isValid, error: { code, message } }`) que el front lee.
+        // `SERVER_ERROR`, no `NOT_FOUND`: una falla nuestra no debe decirle al cliente que su enlace
+        // no existe (hasta el 2026-11-16 lo hacía); el front le pide reintentar.
         app.log.error(error, "Error interno validando token");
         return reply.status(500).send({
           isValid: false,
-          error: { code: "NOT_FOUND", message: "Error interno del servidor" },
+          error: { code: "SERVER_ERROR", message: "Error interno del servidor" },
         });
       }
     },

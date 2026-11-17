@@ -61,12 +61,12 @@ export class TourBrochure {
         availableSeats: availability.availableSeats,
         isBookable:
           availability.availableSeats > 0 &&
-          getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt) ===
+          getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt, tour.returnDate) ===
             TOUR_TEMPORAL_STATUS.UPCOMING,
         // Decisión del PM (2026-11-13): un tour EN CURSO o FINALIZADO ya cerró su logística; el
         // folleto lo muestra como "Finalizado" (y no "Agotado") y la pre-reserva responde 409.
         hasDeparted:
-          getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt) !==
+          getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt, tour.returnDate) !==
           TOUR_TEMPORAL_STATUS.UPCOMING,
       },
     };

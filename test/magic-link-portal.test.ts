@@ -113,6 +113,21 @@ describe("Magic Link (portal del viajero): decisiones del PM", () => {
     assert.equal(res.json().data.bookingStatus, "PENDING");
   });
 
+  it("una falla interna responde 500 SERVER_ERROR, no NOT_FOUND (el enlace sí existe)", async () => {
+    mock.method(db.query.magicTokens, "findFirst", (async () => {
+      throw new Error("connection terminated");
+    }) as never);
+
+    const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.json(), {
+      isValid: false,
+      error: { code: "SERVER_ERROR", message: "Error interno del servidor" },
+    });
+    assert.doesNotMatch(res.body, /connection terminated/);
+  });
+
   it("el enlace no vence: no existe validación de expiración", async () => {
     const token = magicTokenWith("CONFIRMED", "PAID", 6000);
     mock.method(db.query.magicTokens, "findFirst", (async () => ({

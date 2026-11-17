@@ -267,7 +267,11 @@ export class DashboardService {
       // Indicaciones de logística del tour para el estado de cuenta PDF del operador.
       postPaymentInstructions: tour.postPaymentInstructions?.trim() || null,
       // PRÓXIMO | EN CURSO | FINALIZADO | CANCELADO (TOUR_TEMPORAL_STATUS), igual que el listado.
-      temporalStatus: getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt),
+      temporalStatus: getTourTemporalStatus(
+        tour.departureDateTime,
+        tour.cancelledAt,
+        tour.returnDate,
+      ),
       // Cancelación por la agencia (o null). La nota es interna: solo la ve el operador.
       cancellation: tour.cancelledAt
         ? {

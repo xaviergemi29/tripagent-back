@@ -108,6 +108,55 @@ describe("Moneda del tour en las respuestas", () => {
     assert.deepEqual(body.metrics.lifetimeValueByCurrency, { MXN: 6000, USD: 2000 });
   });
 
+  it("historial del viajero: estado temporal por viaje con el regreso y la cancelación", async () => {
+    mock.method(db.query.travelers, "findFirst", (async () => ({
+      id: TRAVELER_ID,
+      agencyId: AGENCY_A,
+      fullName: "Ana Torres",
+    })) as never);
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" });
+    const shift = (days: number) => {
+      const d = new Date(`${today}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + days);
+      return d.toISOString().slice(0, 10);
+    };
+    const row = (over: Record<string, unknown>) => ({
+      id: crypto.randomUUID(),
+      isTitular: true,
+      passengerStatus: "ACTIVE",
+      bookingStatus: "CONFIRMED",
+      amountPaid: 0,
+      currency: "MXN",
+      tourTitle: "Tour",
+      destinationType: "NATIONAL",
+      returnDate: null,
+      cancelledAt: null,
+      ...over,
+    });
+    mock.method(db, "select", (() =>
+      chain([
+        row({ departureDateTime: shift(1) }),
+        // Salió hace 3 días y regresa mañana: sigue en curso (antes el front decía "Concluido").
+        row({ departureDateTime: shift(-3), returnDate: shift(1) }),
+        row({ departureDateTime: shift(-10), returnDate: shift(-8) }),
+        row({ departureDateTime: shift(5), cancelledAt: "2026-11-14T10:00:00.000Z" }),
+      ])) as never);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/travelers/${TRAVELER_ID}/history`,
+      cookies: sessionCookie(app, AGENCY_A, USER_A),
+    });
+    const body = res.json();
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(
+      body.history.map((h: { temporalStatus: string }) => h.temporalStatus),
+      ["PRÓXIMO", "EN CURSO", "FINALIZADO", "CANCELADO"],
+    );
+    assert.equal("cancelledAt" in body.history[0], false);
+  });
+
   it("manifiesto: incluye la moneda del tour", async () => {
     mock.method(db.query.tours, "findFirst", (async () => ({
       id: TOUR_ID,

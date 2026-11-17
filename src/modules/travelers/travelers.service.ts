@@ -1,5 +1,6 @@
 import { ilike, or, count, desc, eq, and, isNull, sql, getTableColumns } from "drizzle-orm";
 import { db } from "../../db/index.js";
+import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
 import { bookingPassengers, bookings, tours, travelers } from "../../db/schema.js";
 import type {
   GetTravelersQuery,
@@ -120,7 +121,9 @@ export class TravelerService {
       })
       .from(travelers)
       .where(whereClause)
-      .orderBy(desc(travelers.createdAt))
+      // `id` como desempate: con altas en el mismo instante, el orden por `offset` sería
+      // inestable y el front (que pide todas las páginas) podría repetir u omitir registros.
+      .orderBy(desc(travelers.createdAt), desc(travelers.id))
       .limit(limit)
       .offset(offset);
 
@@ -204,6 +207,8 @@ export class TravelerService {
         amountPaid: bookings.amountPaid,
         tourTitle: tours.title,
         departureDateTime: tours.departureDateTime,
+        returnDate: tours.returnDate,
+        cancelledAt: tours.cancelledAt,
         destinationType: tours.destinationType,
         currency: tours.currency,
       })
@@ -236,9 +241,17 @@ export class TravelerService {
         }
       }
 
+      // Estado del tour con la regla 9 (salida, regreso y cancelación, hora de CDMX): el front ya
+      // no decide "Concluido" con la fecha de salida. `cancelledAt` no se envía.
+      const { cancelledAt, ...trip } = record;
       return {
-        ...record,
+        ...trip,
         isCancelled, // Flag conveniente para el Front-End
+        temporalStatus: getTourTemporalStatus(
+          record.departureDateTime,
+          cancelledAt,
+          record.returnDate,
+        ),
       };
     });
 

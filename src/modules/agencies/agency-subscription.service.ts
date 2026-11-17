@@ -1,4 +1,4 @@
-import { and, eq, gte, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { agencies, tours, travelers } from "../../db/schema.js";
 import {
@@ -18,18 +18,19 @@ import {
  */
 export class AgencySubscriptionService {
   /**
-   * Tours activos = no borrados, no cancelados y PRÓXIMO o EN CURSO (salida ≥ ayer en CDMX: misma
-   * tolerancia de un día que `getTourTemporalStatus`).
+   * Tours activos = no borrados, no cancelados y PRÓXIMO o EN CURSO: su último día en curso
+   * (regreso válido, o salida + 1 sin regreso; misma regla que `getTourLastActiveDate`) es hoy o
+   * después, en hora de CDMX.
    */
   static async countActiveTours(agencyId: string, now: Date): Promise<number> {
-    const yesterdayMX = toMexicoDate(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+    const todayMX = toMexicoDate(now);
     return db.$count(
       tours,
       and(
         eq(tours.agencyId, agencyId),
         isNull(tours.deletedAt),
         isNull(tours.cancelledAt),
-        gte(tours.departureDateTime, yesterdayMX),
+        sql`(CASE WHEN ${tours.returnDate} >= ${tours.departureDateTime} THEN ${tours.returnDate} ELSE ${tours.departureDateTime} + 1 END) >= ${todayMX}::date`,
       ),
     );
   }

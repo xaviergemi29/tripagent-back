@@ -62,7 +62,9 @@ export class TourService {
       .select()
       .from(tours)
       .where(whereClause)
-      .orderBy(desc(tours.createdAt))
+      // `id` como desempate: con altas en el mismo instante, el orden por `offset` sería
+      // inestable y el front (que pide todas las páginas) podría repetir u omitir registros.
+      .orderBy(desc(tours.createdAt), desc(tours.id))
       .limit(limit)
       .offset(offset);
 
@@ -106,7 +108,11 @@ export class TourService {
     const enrichedTours = fetchedTours.map((tour) => {
       return {
         ...tour,
-        temporalStatus: getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt),
+        temporalStatus: getTourTemporalStatus(
+          tour.departureDateTime,
+          tour.cancelledAt,
+          tour.returnDate,
+        ),
         currentOccupancy: occupancyMap.get(tour.id) || 0,
         sellableCapacity: getSellableCapacity(tour.maxCapacity, tour.staffCapacity),
       };
@@ -272,6 +278,7 @@ export class TourService {
         .select({
           id: tours.id,
           departureDateTime: tours.departureDateTime,
+          returnDate: tours.returnDate,
           cancelledAt: tours.cancelledAt,
           currency: tours.currency,
         })
@@ -284,7 +291,7 @@ export class TourService {
         throw new ConflictError("El tour ya fue cancelado.");
       }
       if (
-        getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt) ===
+        getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt, tour.returnDate) ===
         TOUR_TEMPORAL_STATUS.FINISHED
       ) {
         throw new ConflictError("No se puede cancelar un tour que ya finalizó.");
