@@ -34,5 +34,4 @@ export const voidPaymentBodySchema = z.object({
     .default("Error de captura"),
 });
 
-export type VoidPaymentBody = z.infer<typeof voidPaymentBodySchema>;
 export type CreatePaymentBody = z.infer<typeof createPaymentBodySchema>;

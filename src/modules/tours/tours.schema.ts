@@ -192,7 +192,6 @@ export const getToursQuerySchema = z.object({
   offset: z.coerce.number().min(0).default(0),
 });
 
-export type AssignVehicleBody = z.infer<typeof assignVehicleBodySchema>;
 export type CreateTourBody = z.infer<typeof createTourBodySchema>;
 export type UpdateTourBody = z.infer<typeof updateTourBodySchema>;
 export type GetToursQuery = z.infer<typeof getToursQuerySchema>;

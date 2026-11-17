@@ -33,7 +33,6 @@ export const TOUR_TEMPORAL_STATUS = {
 // el mensaje al viajero sea consistente. Se guarda el código en `tours.cancellationReason`.
 // Etiquetas en el front: TOUR_CANCELLATION_REASON_DICT.
 export const TOUR_CANCELLATION_REASONS = ["WEATHER", "SECURITY", "LOW_SALES", "OTHER"] as const;
-export type TourCancellationReason = (typeof TOUR_CANCELLATION_REASONS)[number];
 
 /** Máximo de la nota interna de cancelación. */
 export const TOUR_CANCELLATION_NOTE_MAX_LENGTH = 200;

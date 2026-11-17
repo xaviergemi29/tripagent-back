@@ -10,5 +10,3 @@ export const updateSeatBodySchema = z.object({
   status: z.enum(["AVAILABLE", "ASSIGNED", "BLOCKED"]),
   passengerId: z.uuid().nullable().optional().default(""),
 });
-
-export type UpdateSeatBody = z.infer<typeof updateSeatBodySchema>;

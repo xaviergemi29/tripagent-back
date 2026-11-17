@@ -95,6 +95,4 @@ export const getAgencybyIdParamSchema = z.object({
 });
 
 export type UpdateAgencyBody = z.infer<typeof updateAgencyBodySchema>;
-export type UpdatePoliciesBody = z.infer<typeof updatePoliciesBodySchema>;
 export type UpdateBrandingBody = z.infer<typeof updateBrandingBodySchema>;
-export type GetAgencyByIdParams = z.infer<typeof getAgencybyIdParamSchema>;

@@ -188,13 +188,6 @@ export const transferPassengerBodySchema = z
 
 export type TransferPassengerBody = z.infer<typeof transferPassengerBodySchema>;
 
-export type CancelFullBookingBody = z.infer<typeof cancelFullBookingBodySchema>;
-export type CancelBookingParams = z.infer<typeof cancelBookingParamsSchema>;
-export type CancelBookingBody = z.infer<typeof cancelBookingBodySchema>;
-export type AddPassengerToBookingBody = z.infer<typeof addPassengerToBookingBody>;
-export type BookingByIdParamsSchema = z.infer<typeof bookingByIdParamsSchema>;
 export type PublicRegisterBody = z.infer<typeof publicRegisterBodySchema>;
-export type CreateBookingBody = z.infer<typeof createBookingBodySchema>;
-export type RegisterGroupBody = z.infer<typeof bookingGroupBodySchema>;
 export type CreateReservationBookingBody = z.infer<typeof newReservationBookingSchema>;
 export type CreatePublicPreBookingBody = z.infer<typeof publicPreBookingBodySchema>;
