@@ -22,8 +22,14 @@ export async function tourSeatsRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { tourId, seatLabel } = request.params;
       const { body } = request;
-      const { agencyId } = request.user;
-      const result = await TourSeatsService.updateSeatStatus(tourId, seatLabel, body, agencyId);
+      const { agencyId, id: userId } = request.user;
+      const result = await TourSeatsService.updateSeatStatus(
+        tourId,
+        seatLabel,
+        body,
+        agencyId,
+        userId,
+      );
       return reply.status(200).send({ data: result });
     },
   );

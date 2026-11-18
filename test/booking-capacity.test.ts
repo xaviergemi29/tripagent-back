@@ -151,6 +151,9 @@ describe("Cupo y sobreventa", () => {
       assert.equal(booking.totalPrice, 2000);
       // Precio pactado por lugar, para altas y bajas posteriores (2026-11-17).
       assert.equal(booking.unitPrice, 1000);
+      // Auditoría: el Magic Link guarda qué operador hizo el apartado.
+      const token = inserts.find((i) => i.table === "magic_tokens")!.values;
+      assert.equal(token.createdByUserId, USER_A);
     });
 
     it("el viajero ya inscrito en el tour → 409", async () => {
@@ -203,6 +206,7 @@ describe("Cupo y sobreventa", () => {
       assert.equal(booking.status, "AWAITING_REGISTRATION");
       const token = inserts.find((i) => i.table === "magic_tokens")!.values;
       assert.equal(token.numberPassengers, 2);
+      assert.equal(token.createdByUserId, null); // sin operador: lo pidió el cliente
     });
 
     it("un viajero existente se reutiliza sin modificar sus datos", async () => {
@@ -327,6 +331,28 @@ describe("Cupo y sobreventa", () => {
 
       assert.equal(res.statusCode, 400);
       assert.match(res.body, /Los lugares de staff deben ser menores a la capacidad total/);
+    });
+
+    it("crear guarda al operador de la sesión como creador y último editor (auditoría)", async () => {
+      const inserted: Record<string, unknown>[] = [];
+      mock.method(db, "insert", (() => ({
+        values: (values: Record<string, unknown>) => {
+          inserted.push(values);
+          return { returning: async () => [{ id: TOUR_ID, ...values }] };
+        },
+      })) as never);
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/tours",
+        cookies: sessionCookie(app, AGENCY_A, USER_A),
+        payload: tourBody,
+      });
+
+      assert.equal(res.statusCode, 201);
+      assert.equal(inserted[0]!.agencyId, AGENCY_A);
+      assert.equal(inserted[0]!.createdByUserId, USER_A);
+      assert.equal(inserted[0]!.updatedByUserId, USER_A);
     });
 
     it("PATCH solo con staffCapacity se valida contra la capacidad guardada → 400", async () => {

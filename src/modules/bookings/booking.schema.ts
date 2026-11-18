@@ -78,7 +78,6 @@ export const bookingGroupBodySchema = z.object({
   passengerType: z.enum(["ADULT", "CHILD"]).default("ADULT"),
   mainClient: mainClientSchema,
   hasCompanions: z.boolean(),
-  companionMethod: z.enum(["MANUAL", "SHARE_LINK"]),
   groupId: z.uuid("El groupId debe ser un UUID válido").optional(),
   companions: z.array(companionSchema),
 });

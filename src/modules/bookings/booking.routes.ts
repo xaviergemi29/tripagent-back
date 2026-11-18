@@ -48,6 +48,7 @@ export async function bookingRoutes(app: FastifyInstance) {
         request.params.id,
         request.body,
         request.user.agencyId,
+        request.user.id,
       );
       return reply.status(201).send({ success: true, data: result });
     },

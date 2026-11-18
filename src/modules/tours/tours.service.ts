@@ -139,10 +139,10 @@ export class TourService {
   /**
    * Inserta un nuevo tour en PostgreSQL de forma atómica y retorna el registro creado.
    */
-  static async createTour(data: CreateTourBody, agencyId: string) {
+  static async createTour(data: CreateTourBody, agencyId: string, userId: string) {
     const [newTour] = await db
       .insert(tours)
-      .values({ ...data, agencyId })
+      .values({ ...data, agencyId, createdByUserId: userId, updatedByUserId: userId })
       .returning();
     return newTour;
   }
@@ -187,7 +187,7 @@ export class TourService {
    * - Moneda y precio congelados (decisión del PM): con pagos registrados → ConflictError (409).
    * - Si cambia el anticipo, se recalcula el estado de cada reserva activa (regla 11).
    */
-  static async updateTour(id: string, data: UpdateTourBody, agencyId: string) {
+  static async updateTour(id: string, data: UpdateTourBody, agencyId: string, userId: string) {
     const { removeBrochure, ...restData } = data;
 
     const result = await db.transaction(async (tx) => {
@@ -271,6 +271,7 @@ export class TourService {
         .set({
           ...restData,
           ...(removeBrochure ? { brochureUrl: null } : {}),
+          updatedByUserId: userId,
           updatedAt: new Date().toISOString(),
         })
         .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
@@ -320,7 +321,7 @@ export class TourService {
    * Rechaza (409) un tour ya cancelado o FINALIZADO. Un tour EN CURSO sí se puede cancelar (p. ej.
    * cierre carretero el día de salida).
    */
-  static async cancelTour(id: string, body: CancelTourBody, agencyId: string) {
+  static async cancelTour(id: string, body: CancelTourBody, agencyId: string, userId: string) {
     return db.transaction(async (tx) => {
       const [tour] = await tx
         .select({
@@ -352,6 +353,7 @@ export class TourService {
           cancelledAt: now,
           cancellationReason: body.reason,
           cancellationNote: body.note ?? null,
+          updatedByUserId: userId,
           updatedAt: now,
         })
         .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId)));
@@ -396,7 +398,7 @@ export class TourService {
    * hay que cancelar y reembolsar. La fila del tour se bloquea para que no entre una reserva
    * mientras se valida.
    */
-  static async softDeleteTour(id: string, agencyId: string) {
+  static async softDeleteTour(id: string, agencyId: string, userId: string) {
     return db.transaction(async (tx) => {
       const [tour] = await tx
         .select({ id: tours.id, currency: tours.currency })
@@ -429,7 +431,7 @@ export class TourService {
 
       const [tourDeleted] = await tx
         .update(tours)
-        .set({ deletedAt: new Date().toISOString() })
+        .set({ deletedAt: new Date().toISOString(), updatedByUserId: userId })
         .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
         .returning();
 
@@ -450,7 +452,12 @@ export class TourService {
    * Guarda la ruta del folleto nuevo y devuelve el tour + la ruta anterior, para que la ruta HTTP
    * borre el archivo viejo solo después de confirmar la base (mismo patrón que el logotipo).
    */
-  static async updateBrochureUrl(id: string, brochureUrl: string, agencyId: string) {
+  static async updateBrochureUrl(
+    id: string,
+    brochureUrl: string,
+    agencyId: string,
+    userId: string,
+  ) {
     return db.transaction(async (tx) => {
       const [current] = await tx
         .select({
@@ -469,7 +476,7 @@ export class TourService {
 
       const [updatedTour] = await tx
         .update(tours)
-        .set({ brochureUrl, updatedAt: new Date().toISOString() })
+        .set({ brochureUrl, updatedByUserId: userId, updatedAt: new Date().toISOString() })
         .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId)))
         .returning();
       if (!updatedTour) throw new NotFoundError("Tour no encontrado");
@@ -494,6 +501,7 @@ export class TourService {
     id: string,
     target: { vehicleId?: string | undefined; templateId?: string | undefined },
     agencyId: string,
+    userId: string,
   ) {
     return db.transaction(async (tx) => {
       const vehicle = target.templateId
@@ -549,7 +557,7 @@ export class TourService {
 
       const [updatedTour] = await tx
         .update(tours)
-        .set({ vehicleId, updatedAt: new Date().toISOString() })
+        .set({ vehicleId, updatedByUserId: userId, updatedAt: new Date().toISOString() })
         .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
         .returning();
       if (!updatedTour) {

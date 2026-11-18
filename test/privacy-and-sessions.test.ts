@@ -68,7 +68,6 @@ describe("A1 y A2. Registro público del Magic Link", () => {
       boardingPoint: "Plaza (06:00)",
     },
     hasCompanions: false,
-    companionMethod: "MANUAL",
     companions: [],
   };
 

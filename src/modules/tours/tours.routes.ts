@@ -48,7 +48,11 @@ export async function tourRoutes(app: FastifyInstance) {
     "/",
     { onRequest: [app.authenticate], schema: { body: createTourBodySchema } },
     async (request, reply) => {
-      const tour = await TourService.createTour(request.body, request.user.agencyId);
+      const tour = await TourService.createTour(
+        request.body,
+        request.user.agencyId,
+        request.user.id,
+      );
       return reply.status(201).send({ data: tour });
     },
   );
@@ -76,6 +80,7 @@ export async function tourRoutes(app: FastifyInstance) {
           request.params.tourId,
           request.body,
           request.user.agencyId,
+          request.user.id,
         );
         if (!tour) return reply.status(404).send({ error: "Tour no encontrado" });
         return reply.status(200).send({ data: tour });
@@ -100,6 +105,7 @@ export async function tourRoutes(app: FastifyInstance) {
         request.params.tourId,
         request.body,
         request.user.agencyId,
+        request.user.id,
       );
       if (!result) return reply.status(404).send({ error: "Tour no encontrado" });
       return reply.status(200).send({ data: result });
@@ -112,7 +118,11 @@ export async function tourRoutes(app: FastifyInstance) {
     { onRequest: [app.authenticate], schema: { params: getTourByIdParamsSchema } },
     async (request, reply) => {
       try {
-        const tour = await TourService.softDeleteTour(request.params.tourId, request.user.agencyId);
+        const tour = await TourService.softDeleteTour(
+          request.params.tourId,
+          request.user.agencyId,
+          request.user.id,
+        );
         if (!tour) return reply.status(404).send({ error: "tour no encontrado" });
         return reply.status(200).send({ data: tour });
       } catch (error) {
@@ -137,7 +147,7 @@ export async function tourRoutes(app: FastifyInstance) {
     "/:tourId/brochure",
     { onRequest: [app.authenticate], schema: { params: getTourByIdParamsSchema } },
     async (request, reply) => {
-      const { agencyId } = request.user;
+      const { agencyId, id: userId } = request.user;
       const { tourId } = request.params;
       let savedPath: string | null = null;
 
@@ -168,6 +178,7 @@ export async function tourRoutes(app: FastifyInstance) {
           tourId,
           toPublicUploadPath("brochures", fileName),
           agencyId,
+          userId,
         );
         savedPath = null; // La base ya apunta al archivo nuevo: no se borra.
         await removeUpload("brochures", previousBrochureUrl, brochureFilePrefix(tourId));
@@ -199,6 +210,7 @@ export async function tourRoutes(app: FastifyInstance) {
           request.params.tourId,
           { vehicleId, templateId },
           request.user.agencyId,
+          request.user.id,
         );
         return reply.status(200).send({ data: tour });
       } catch (error) {

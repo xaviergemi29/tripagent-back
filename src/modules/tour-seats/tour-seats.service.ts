@@ -78,6 +78,7 @@ export class TourSeatsService {
       passengerId?: string | null; // Este es el traveler.id que mandas en el cURL
     },
     agencyId: string,
+    userId: string,
   ) {
     return db.transaction(async (tx) => {
       // Multi-tenant: el tour debe pertenecer a la agencia de la sesión antes de tocar asientos.
@@ -206,7 +207,8 @@ export class TourSeatsService {
           activeBookingsId.length > 0
             ? await tx
                 .update(bookingPassengers)
-                .set({ seatLabel })
+                // Auditoría: quién asignó el asiento (no se borra al liberarlo).
+                .set({ seatLabel, seatAssignedByUserId: userId })
                 .where(
                   and(
                     eq(bookingPassengers.travelerId, payload.passengerId),

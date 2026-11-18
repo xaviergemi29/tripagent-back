@@ -266,7 +266,6 @@ describe("Magic Link: el registro del grupo solo se acepta una vez", () => {
       boardingPoint: "Plaza (06:00)",
     },
     hasCompanions: false,
-    companionMethod: "MANUAL",
     companions: [],
     privacyNoticeAccepted: true,
   };

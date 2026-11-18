@@ -40,7 +40,6 @@ describe("Reglas de fechas", () => {
         token: "tok",
         mainClient: { ...mainClient, ...(birthDate === undefined ? {} : { birthDate }) },
         hasCompanions: companionBirthDate !== undefined,
-        companionMethod: "MANUAL",
         companions:
           companionBirthDate === undefined
             ? []

@@ -48,7 +48,13 @@ function mockSeatTransaction(
   passenger: ReturnType<typeof groupWithPaid> | undefined = groupWithPaid(1000),
 ) {
   const select = mock.fn(() => chain([{ id: BOOKING_A }]));
-  const update = mock.fn(() => chain(assignedRows));
+  const sets: Record<string, unknown>[] = [];
+  const update = mock.fn(() => ({
+    set: (values: Record<string, unknown>) => {
+      sets.push(values);
+      return chain(assignedRows);
+    },
+  }));
   const del = mock.fn(() => chain(undefined));
   const insert = mock.fn(() => chain(undefined));
   const tx = {
@@ -62,7 +68,7 @@ function mockSeatTransaction(
     insert,
   };
   mock.method(db, "transaction", (async (fn: (t: unknown) => unknown) => fn(tx)) as never);
-  return { select, update, del, insert };
+  return { select, update, del, insert, sets };
 }
 
 describe("/api/seats: autenticación y aislamiento por agencia", () => {
@@ -157,7 +163,7 @@ describe("/api/seats: autenticación y aislamiento por agencia", () => {
     });
 
     it("usuario de A asigna un asiento a un pasajero de su tour", async () => {
-      const { update } = mockSeatTransaction([{ id: "row" }]);
+      const { update, sets } = mockSeatTransaction([{ id: "row" }]);
 
       const res = await app.inject({
         method: "PATCH",
@@ -169,6 +175,8 @@ describe("/api/seats: autenticación y aislamiento por agencia", () => {
       assert.equal(res.statusCode, 200);
       assert.deepEqual(res.json().data, { success: true, seatLabel: "01", status: "ASSIGNED" });
       assert.equal(update.mock.callCount(), 2); // liberar etiqueta + asignar
+      // Auditoría: la asignación guarda al operador de la sesión.
+      assert.deepEqual(sets[1], { seatLabel: "01", seatAssignedByUserId: USER_A });
     });
 
     it("manipular passengerId con un viajero ajeno al tour: 404 (la transacción se revierte)", async () => {

@@ -140,6 +140,7 @@ describe("POST /api/tours/:id/cancel (cancelación por la agencia)", () => {
     assert.equal(tourUpdate.values.cancellationReason, "WEATHER");
     assert.equal(tourUpdate.values.cancellationNote, "Pronóstico de tormenta");
     assert.ok(tourUpdate.values.cancelledAt);
+    assert.equal(tourUpdate.values.updatedByUserId, USER_A); // quién canceló el tour
 
     const bookingUpdates = updates.filter((u) => u.table === "bookings");
     assert.equal(bookingUpdates.length, 3);

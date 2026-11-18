@@ -106,6 +106,7 @@ describe("Ciclo de vida del tour", () => {
 
       assert.equal(res.statusCode, 200);
       assert.ok(payloads[0]?.deletedAt);
+      assert.equal(payloads[0]?.updatedByUserId, USER_A); // quién lo dio de baja
     });
 
     it("tour inexistente o de otra agencia → 404", async () => {
@@ -181,7 +182,7 @@ describe("Ciclo de vida del tour", () => {
     });
 
     it("cambiar el precio sin pagos → 200", async () => {
-      const { update } = updateSpy();
+      const { update, payloads } = updateSpy();
       mockTransaction({ select: selectSequence([current], []), update });
 
       const res = await app.inject({
@@ -193,6 +194,7 @@ describe("Ciclo de vida del tour", () => {
 
       assert.equal(res.statusCode, 200);
       assert.equal(update.mock.callCount(), 1);
+      assert.equal(payloads[0]?.updatedByUserId, USER_A); // auditoría: último editor
     });
 
     // Decisión del PM (2026-11-14): la capacidad vendible no puede quedar bajo los ocupados.
@@ -264,7 +266,8 @@ describe("Ciclo de vida del tour", () => {
       });
 
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(Object.keys(payloads[0]!).sort(), ["title", "updatedAt"]);
+      // Además del campo enviado, solo la auditoría: fecha y operador del último cambio.
+      assert.deepEqual(Object.keys(payloads[0]!).sort(), ["title", "updatedAt", "updatedByUserId"]);
     });
 
     // OBS-038 (2026-11-17): al menos un método de cobro, combinando lo enviado con lo guardado.

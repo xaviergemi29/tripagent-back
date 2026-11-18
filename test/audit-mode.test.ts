@@ -204,7 +204,7 @@ describe("Modo Auditoría en la API (OBS-004)", () => {
       it("cambiar el folleto → 409 sin actualizar la base", async () => {
         const { fake } = scenario(state);
         await assert.rejects(
-          TourService.updateBrochureUrl(TOUR, "/uploads/brochures/nuevo.pdf", AGENCY_A),
+          TourService.updateBrochureUrl(TOUR, "/uploads/brochures/nuevo.pdf", AGENCY_A, USER_A),
           /solo consulta/,
         );
         assert.equal(fake.writes.length, 0);

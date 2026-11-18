@@ -63,6 +63,8 @@ interface ReserveSeatsInput {
   whatsappCountry: CountryCode | null | undefined;
   email: string | null;
   numberPassengers: number;
+  /** Operador que hizo el apartado rápido; `null` en la pre-reserva pública del folleto. */
+  createdByUserId: string | null;
 }
 
 export class BookingService {
@@ -184,11 +186,7 @@ export class BookingService {
       const companionTypeMap = new Map<string, "ADULT" | "CHILD">();
       const companionBoardingMap = new Map<string, string>();
 
-      if (
-        payload.hasCompanions &&
-        payload.companionMethod === "MANUAL" &&
-        payload.companions.length > 0
-      ) {
+      if (payload.hasCompanions && payload.companions.length > 0) {
         for (const comp of payload.companions) {
           let compId: string;
           const existingComp = comp.whatsappPhone
@@ -318,6 +316,7 @@ export class BookingService {
     tourId: string,
     data: CreateReservationBookingBody,
     agencyId: string,
+    userId: string,
   ) {
     return db.transaction(async (tx) => {
       const tour = await tx.query.tours.findFirst({
@@ -341,6 +340,7 @@ export class BookingService {
         whatsappCountry: data.whatsappCountry,
         email: data.email,
         numberPassengers: data.numberPassengers,
+        createdByUserId: userId,
       });
     });
   }
@@ -385,6 +385,7 @@ export class BookingService {
         whatsappCountry: data.whatsappCountry,
         email: null,
         numberPassengers: data.numberPassengers,
+        createdByUserId: null,
       });
     });
   }
@@ -398,7 +399,7 @@ export class BookingService {
     tour: { id: string; agencyId: string; price: number },
     data: ReserveSeatsInput,
   ) {
-    const { numberPassengers, fullName, whatsapp, whatsappCountry, email } = data;
+    const { numberPassengers, fullName, whatsapp, whatsappCountry, email, createdByUserId } = data;
 
     // 1. Cupo atómico (bloquea la fila del tour hasta el commit) → 409 si no alcanza.
     const { availableSeats } = await BookingCapacityService.assertSeatsAvailable(
@@ -496,6 +497,7 @@ export class BookingService {
       numberPassengers,
       currentUses: 1,
       expiresAt: expires.toISOString(),
+      createdByUserId,
     });
 
     return {
