@@ -450,6 +450,32 @@ describe("Ciclo de vida del tour", () => {
 
       assert.equal(res.statusCode, 200);
     });
+
+    // Modo Auditoría (OBS-004): en FINALIZADO o CANCELADO tampoco se asigna la primera unidad.
+    for (const [label, overrides] of [
+      ["FINALIZADO", { departureDateTime: shiftDays(-10), returnDate: shiftDays(-8) }],
+      ["CANCELADO", { departureDateTime: shiftDays(5), cancelledAt: "2026-11-14T10:00:00.000Z" }],
+    ] as const) {
+      it(`tour ${label} sin unidad → 409 al asignar la primera, sin escribir`, async () => {
+        const { update, del } = vehicleTx(bigLayout, [], {
+          ...tourRow,
+          vehicleId: null,
+          ...overrides,
+        });
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/tours/${TOUR_ID}/vehicle`,
+          cookies: cookies(),
+          payload: { vehicleId: VEHICLE_ID },
+        });
+
+        assert.equal(res.statusCode, 409);
+        assert.match(res.json().error, /solo consulta/);
+        assert.equal(update.mock.callCount(), 0);
+        assert.equal(del.mock.callCount(), 0);
+      });
+    }
   });
 
   describe("PATCH /api/seats/:tourId/seats/:label BLOCKED — tope de staff", () => {

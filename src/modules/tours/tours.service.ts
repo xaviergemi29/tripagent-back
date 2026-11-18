@@ -30,6 +30,7 @@ import type {
 import { BookingService } from "../bookings/booking.service.js";
 import { TOUR_TEMPORAL_STATUS } from "../../shared/constants/domain.constants.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
+import { assertTourNotInAuditMode } from "../../shared/utils/tour-audit-mode.util.js";
 import { getSellableCapacity, sumOccupiedSeats } from "../../shared/utils/booking-rules.util.js";
 import {
   BusinessRuleError,
@@ -151,7 +152,17 @@ export class TourService {
     if (!tour) return undefined;
 
     // `hasPayments`: la UI de edición congela moneda y precio (la API también lo valida).
-    return { ...tour, hasPayments: await TourService.hasRegisteredPayments(db, id) };
+    // `temporalStatus`: la UI no ofrece la edición de un tour FINALIZADO o CANCELADO (Modo
+    // Auditoría, OBS-004; la API responde 409 al guardarlo).
+    return {
+      ...tour,
+      hasPayments: await TourService.hasRegisteredPayments(db, id),
+      temporalStatus: getTourTemporalStatus(
+        tour.departureDateTime,
+        tour.cancelledAt,
+        tour.returnDate,
+      ),
+    };
   }
 
   /** ¿Existe al menos un movimiento en `payments` (abono, reembolso o anulación) del tour? */
@@ -184,11 +195,17 @@ export class TourService {
           depositPerPerson: tours.depositPerPerson,
           brochureUrl: tours.brochureUrl,
           departureDateTime: tours.departureDateTime,
+          returnDate: tours.returnDate,
+          cancelledAt: tours.cancelledAt,
         })
         .from(tours)
         .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
         .for("update");
       if (!current) return undefined;
+
+      // Modo Auditoría (OBS-004; decisión del usuario, 2026-11-17): un tour FINALIZADO o CANCELADO
+      // no se edita. El listado oculta "Editar Tour" en esos estados.
+      assertTourNotInAuditMode(current);
 
       // La salida no se mueve al pasado (2026-11-17): un tour con reservas pasaría a FINALIZADO.
       // Conservar la fecha guardada (aunque ya haya pasado) sí se permite.
@@ -417,11 +434,19 @@ export class TourService {
   static async updateBrochureUrl(id: string, brochureUrl: string, agencyId: string) {
     return db.transaction(async (tx) => {
       const [current] = await tx
-        .select({ brochureUrl: tours.brochureUrl })
+        .select({
+          brochureUrl: tours.brochureUrl,
+          departureDateTime: tours.departureDateTime,
+          returnDate: tours.returnDate,
+          cancelledAt: tours.cancelledAt,
+        })
         .from(tours)
         .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
         .for("update");
       if (!current) throw new NotFoundError("Tour no encontrado");
+      // Modo Auditoría (OBS-004): el folleto de un tour FINALIZADO o CANCELADO no cambia. La ruta
+      // borra el archivo recién escrito al recibir el error.
+      assertTourNotInAuditMode(current);
 
       const [updatedTour] = await tx
         .update(tours)
@@ -481,24 +506,17 @@ export class TourService {
         throw new NotFoundError("Tour no encontrado o sin permisos");
       }
 
-      // La unidad solo se cambia mientras el tour es PRÓXIMO (petición del usuario, 2026-11-17): uno
-      // EN CURSO ya salió en su vehículo y uno FINALIZADO o CANCELADO es de solo lectura. Asignar la
-      // primera unidad (sin vehículo) o la misma sigue permitido.
-      const temporalStatus = getTourTemporalStatus(
-        tour.departureDateTime,
-        tour.cancelledAt,
-        tour.returnDate,
-      );
+      // Modo Auditoría (OBS-004): un tour FINALIZADO o CANCELADO no asigna ni cambia unidad.
+      assertTourNotInAuditMode(tour);
+      // EN CURSO (petición del usuario, 2026-11-17): el tour ya salió en su vehículo, así que no se
+      // cambia. Asignar la primera unidad (sin vehículo) o la misma sigue permitido.
       if (
-        temporalStatus !== TOUR_TEMPORAL_STATUS.UPCOMING &&
+        getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt, tour.returnDate) ===
+          TOUR_TEMPORAL_STATUS.IN_PROGRESS &&
         tour.vehicleId &&
         tour.vehicleId !== vehicleId
       ) {
-        throw new ConflictError(
-          temporalStatus === TOUR_TEMPORAL_STATUS.IN_PROGRESS
-            ? "El tour ya está en curso: no se puede cambiar de vehículo."
-            : "El tour ya finalizó o fue cancelado: no se puede cambiar de vehículo.",
-        );
+        throw new ConflictError("El tour ya está en curso: no se puede cambiar de vehículo.");
       }
 
       const seatLabels = getLayoutSeatLabels(vehicle.layoutMap ?? []);

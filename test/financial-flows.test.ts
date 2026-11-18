@@ -399,7 +399,7 @@ describe("Flujos financieros y de grupo (de punta a punta)", () => {
       assert.deepEqual(snapshotOtherBooking(fake), other);
     });
 
-    it("tour cancelado: anular un abono ya reembolsado (neto quedaría negativo) → 409 sin escribir", async () => {
+    it("tour cancelado: anular un abono ya reembolsado → 409 (Modo Auditoría) sin escribir", async () => {
       const fake = scenario({
         tourCancelled: true,
         status: "CANCELLED",
@@ -408,12 +408,12 @@ describe("Flujos financieros y de grupo (de punta a punta)", () => {
       });
       const res = await voidPayment(String(fake.paymentsOf(BOOKING)[0]!.id));
       assert.equal(res.statusCode, 409);
-      assert.match(res.json().error, /ya se devolvió/);
+      assert.match(res.json().error, /solo consulta/);
       assert.equal(fake.writes.length, 0);
       assert.equal(fake.booking(BOOKING).amountPaid, 0);
     });
 
-    it("tour cancelado: abono mal capturado anulado después del reembolso → neto $0 y REFUNDED", async () => {
+    it("tour cancelado: no se anula un abono, ni siquiera mal capturado → 409 (Modo Auditoría, OBS-004)", async () => {
       const fake = scenario({
         tourCancelled: true,
         status: "CANCELLED",
@@ -425,9 +425,9 @@ describe("Flujos financieros y de grupo (de punta a punta)", () => {
         ],
       });
       const res = await voidPayment(String(fake.paymentsOf(BOOKING)[1]!.id));
-      assert.equal(res.statusCode, 200);
-      assert.equal(fake.booking(BOOKING).amountPaid, 0);
-      assert.equal(fake.booking(BOOKING).paymentStatus, "REFUNDED");
+      assert.equal(res.statusCode, 409);
+      assert.match(res.json().error, /solo consulta/);
+      assert.equal(fake.writes.length, 0);
     });
 
     it("reserva cancelada sin retención (total $0): anular su abono deja PENDING, no PAID", async () => {

@@ -97,9 +97,20 @@ describe("Reglas de fechas", () => {
   });
 
   it("editar: mover la salida al pasado → 400; conservar la fecha guardada no se rechaza por eso", async () => {
-    const past = shiftDays(-3);
+    // Tour EN CURSO (salió ayer y regresa en dos días): sigue editable. Uno FINALIZADO o CANCELADO
+    // responde 409 por el Modo Auditoría (audit-mode.test.ts).
+    const past = shiftDays(-1);
     const tx = {
-      select: () => chain([{ maxCapacity: 20, staffCapacity: 0, departureDateTime: past }]),
+      select: () =>
+        chain([
+          {
+            maxCapacity: 20,
+            staffCapacity: 0,
+            departureDateTime: past,
+            returnDate: shiftDays(2),
+            cancelledAt: null,
+          },
+        ]),
     };
     mock.method(db, "transaction", (async (fn: (t: unknown) => unknown) => fn(tx)) as never);
     const patch = (departureDateTime: string) =>
@@ -110,7 +121,7 @@ describe("Reglas de fechas", () => {
         payload: { departureDateTime },
       });
 
-    const moved = await patch(shiftDays(-1));
+    const moved = await patch(shiftDays(-2));
     assert.equal(moved.statusCode, 400);
     assert.match(moved.json().error, /no puede ser anterior a hoy/);
 

@@ -77,7 +77,7 @@ export function createFakeLedgerDb(initial: FakeStore) {
   let store: FakeStore = clone(initial);
   const writes: WriteLog[] = [];
 
-  /** Relaciones `with` que leen estos flujos (reserva → tour y token). */
+  /** Relaciones `with` que leen estos flujos (reserva → tour y token; tour → vehículo). */
   const withRelations = (key: keyof FakeStore, row: Row, relations?: Record<string, unknown>) => {
     if (!relations) return row;
     const result: Row = { ...row };
@@ -88,6 +88,8 @@ export function createFakeLedgerDb(initial: FakeStore) {
         result.magicToken = clone(
           store.magicTokens.find((token) => token.bookingId === row.id) ?? null,
         );
+      } else if (key === "tours" && relation === "vehicle") {
+        result.vehicle = null; // Sin vehículos en la base simulada.
       } else {
         throw new Error(`fake-ledger-db: relación no simulada (${key}.${relation})`);
       }

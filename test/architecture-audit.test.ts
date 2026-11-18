@@ -244,6 +244,13 @@ describe("Auditoría 2026-11-15", () => {
           }),
         }),
         query: {
+          // Tour PRÓXIMO: fuera del Modo Auditoría.
+          bookings: {
+            findFirst: async () => ({
+              id: BOOKING_ID,
+              tour: { departureDateTime: "2099-01-10", returnDate: null, cancelledAt: null },
+            }),
+          },
           payments: {
             findFirst: async () => ({ ...entries[0], agencyId: AGENCY_A, bookingId: BOOKING_ID }),
             findMany: async () => entries,

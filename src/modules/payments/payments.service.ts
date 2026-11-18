@@ -12,6 +12,9 @@ import { derivePaymentStatus, ledgerHasRefund } from "../../shared/utils/payment
 import { formatMoney } from "../../shared/utils/money.util.js";
 import { BookingStatusService } from "../bookings/booking-status.service.js";
 import { lockBookingForUpdate } from "../bookings/booking-lock.util.js";
+import { TOUR_TEMPORAL_STATUS } from "../../shared/constants/domain.constants.js";
+import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
+import { assertTourNotInAuditMode } from "../../shared/utils/tour-audit-mode.util.js";
 
 /** Liga una anulación con su abono: `voidPayment` escribe "(Ref: <id>)" en `referenceInfo`. */
 const voidReference = (paymentId: string) => `(Ref: ${paymentId})`;
@@ -30,10 +33,32 @@ export class PaymentService {
       // 1. Validar existencia y propiedad de la reserva
       const booking = await tx.query.bookings.findFirst({
         where: and(eq(bookings.id, bookingId), eq(bookings.agencyId, agencyId)),
-        with: { tour: { columns: { cancelledAt: true, currency: true } } },
+        with: {
+          tour: {
+            columns: {
+              cancelledAt: true,
+              currency: true,
+              departureDateTime: true,
+              returnDate: true,
+            },
+          },
+        },
       });
 
       if (!booking) throw new NotFoundError("Reserva no encontrada o no pertenece a esta agencia");
+
+      // Modo Auditoría (OBS-004): un tour FINALIZADO no admite abonos ni reembolsos. El CANCELADO
+      // conserva su excepción (solo reembolsos), que se valida abajo.
+      if (
+        booking.tour &&
+        getTourTemporalStatus(
+          booking.tour.departureDateTime,
+          booking.tour.cancelledAt,
+          booking.tour.returnDate,
+        ) === TOUR_TEMPORAL_STATUS.FINISHED
+      ) {
+        assertTourNotInAuditMode(booking.tour);
+      }
 
       // Tour cancelado por la agencia (decisión del PM, 2026-11-14): Modo Auditoría con una
       // excepción, los reembolsos. No entra dinero nuevo.
@@ -178,6 +203,16 @@ export class PaymentService {
     return db.transaction(async (tx) => {
       // 0. Candado de la reserva: dos anulaciones simultáneas del mismo abono se serializan.
       await lockBookingForUpdate(tx, bookingId, agencyId);
+
+      // Modo Auditoría (OBS-004): no se anulan abonos de un tour FINALIZADO o CANCELADO.
+      const bookingTour = await tx.query.bookings.findFirst({
+        where: and(eq(bookings.id, bookingId), eq(bookings.agencyId, agencyId)),
+        columns: { id: true },
+        with: {
+          tour: { columns: { departureDateTime: true, returnDate: true, cancelledAt: true } },
+        },
+      });
+      if (bookingTour?.tour) assertTourNotInAuditMode(bookingTour.tour);
 
       // 1. Buscar el pago original (Usando las llaves foráneas correctas de la tabla payments)
       const originalPayment = await tx.query.payments.findFirst({

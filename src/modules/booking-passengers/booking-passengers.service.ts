@@ -2,6 +2,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { BookingStatusService } from "../bookings/booking-status.service.js";
 import { lockBookingForUpdate } from "../bookings/booking-lock.util.js";
+import { assertTourNotInAuditMode } from "../../shared/utils/tour-audit-mode.util.js";
 import {
   BusinessRuleError,
   ConflictError,
@@ -27,12 +28,16 @@ export class BookingPassengerService {
       const booking = await tx.query.bookings.findFirst({
         where: and(eq(bookings.id, bookingId), eq(bookings.agencyId, agencyId)),
         with: {
-          tour: { columns: { price: true } },
+          tour: {
+            columns: { price: true, departureDateTime: true, returnDate: true, cancelledAt: true },
+          },
           magicToken: { columns: { numberPassengers: true } },
         },
       });
 
       if (!booking) throw new NotFoundError("Reserva no encontrada");
+      // Modo Auditoría (OBS-004): un tour FINALIZADO o CANCELADO no admite bajas.
+      if (booking.tour) assertTourNotInAuditMode(booking.tour);
       // Operar sobre un recurso cuyo estado ya cambió → 409 (decisión del usuario, 2026-11-17: el
       // 400 queda solo para datos mal formados).
       if (booking.status === "CANCELLED") {

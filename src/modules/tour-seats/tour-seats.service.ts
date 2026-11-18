@@ -1,6 +1,7 @@
 import { eq, and, inArray, ne, isNotNull, isNull, count } from "drizzle-orm";
 import { ConflictError, NotFoundError } from "../../shared/errors/domain-errors.js";
 import { getLayoutSeats } from "../../shared/utils/vehicle-layout.util.js";
+import { assertTourNotInAuditMode } from "../../shared/utils/tour-audit-mode.util.js";
 import { db } from "../../db/index.js";
 import {
   getExpectedGroupSize,
@@ -82,10 +83,21 @@ export class TourSeatsService {
       // Multi-tenant: el tour debe pertenecer a la agencia de la sesión antes de tocar asientos.
       const tour = await tx.query.tours.findFirst({
         where: and(eq(tours.id, tourId), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)),
-        columns: { id: true, price: true, depositPerPerson: true, staffCapacity: true },
+        columns: {
+          id: true,
+          price: true,
+          depositPerPerson: true,
+          staffCapacity: true,
+          departureDateTime: true,
+          returnDate: true,
+          cancelledAt: true,
+        },
         with: { vehicle: { columns: { layoutMap: true } } },
       });
       if (!tour) throw new NotFoundError("Tour no encontrado");
+      // Modo Auditoría (OBS-004): el croquis de un tour FINALIZADO o CANCELADO es de solo consulta
+      // (asignar, mover, liberar y bloquear → 409). EN CURSO sigue operable.
+      assertTourNotInAuditMode(tour);
 
       // Candado del tour (después de confirmar la pertenencia): los cambios de asiento de un mismo
       // tour se ejecutan uno tras otro. Sin él, dos operadores podían asignar la misma etiqueta a

@@ -24,6 +24,7 @@ import {
   NotFoundError,
 } from "../../shared/errors/domain-errors.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
+import { assertTourNotInAuditMode } from "../../shared/utils/tour-audit-mode.util.js";
 import { derivePaymentStatus } from "../../shared/utils/payment-status.util.js";
 import { resolveAgreedUnitPrice } from "../../shared/utils/booking-rules.util.js";
 import { formatMoney } from "../../shared/utils/money.util.js";
@@ -60,9 +61,6 @@ interface ReserveSeatsInput {
   numberPassengers: number;
 }
 
-/** Mensaje común cuando se intenta operar un tour cancelado por la agencia. */
-export const TOUR_CANCELLED_ERROR =
-  "El tour fue cancelado por la agencia: ya no admite reservas ni cambios de lugares.";
 export class BookingService {
   /**
    * Registro del grupo desde el Magic Link (`POST /bookings/public/register`). El tenant sale del
@@ -320,11 +318,18 @@ export class BookingService {
     return db.transaction(async (tx) => {
       const tour = await tx.query.tours.findFirst({
         where: and(eq(tours.id, tourId), eq(tours.agencyId, agencyId)),
-        columns: { id: true, agencyId: true, price: true, cancelledAt: true },
+        columns: {
+          id: true,
+          agencyId: true,
+          price: true,
+          departureDateTime: true,
+          returnDate: true,
+          cancelledAt: true,
+        },
       });
       if (!tour) throw new NotFoundError("Tour no encontrado");
-      // Un tour cancelado por la agencia ya no vende (Modo Auditoría, regla 9).
-      if (tour.cancelledAt) throw new ConflictError(TOUR_CANCELLED_ERROR);
+      // Un tour FINALIZADO o CANCELADO ya no vende (Modo Auditoría, regla 9; OBS-004).
+      assertTourNotInAuditMode(tour);
 
       return BookingService.reserveSeats(tx, tour, {
         fullName: data.fullName,
@@ -504,10 +509,21 @@ export class BookingService {
           eq(bookings.agencyId, agencyId),
           isNull(bookings.deletedAt),
         ),
-        with: { tour: { columns: { currency: true } } },
+        with: {
+          tour: {
+            columns: {
+              currency: true,
+              departureDateTime: true,
+              returnDate: true,
+              cancelledAt: true,
+            },
+          },
+        },
       });
 
       if (!booking) throw new NotFoundError("Reserva no encontrada");
+      // Modo Auditoría (OBS-004): un tour FINALIZADO o CANCELADO no admite cancelaciones.
+      if (booking.tour) assertTourNotInAuditMode(booking.tour);
       if (booking.status === "CANCELLED") {
         throw new ConflictError("La reserva ya se encuentra cancelada");
       }
@@ -545,9 +561,11 @@ export class BookingService {
       }
       const tour = await tx.query.tours.findFirst({
         where: eq(tours.id, booking.tourId),
-        columns: { price: true },
+        columns: { price: true, departureDateTime: true, returnDate: true, cancelledAt: true },
       });
       if (!tour) throw new NotFoundError("Tour no encontrado.");
+      // Modo Auditoría (OBS-004): un tour FINALIZADO o CANCELADO no admite lugares nuevos.
+      assertTourNotInAuditMode(tour);
 
       // Cupo atómico con la misma regla que el apartado (bloquea el tour) → 409 si está lleno.
       await BookingCapacityService.assertSeatsAvailable(tx, booking.tourId, 1);
@@ -630,6 +648,13 @@ export class BookingService {
       if (!booking || booking.status === "CANCELLED")
         throw new NotFoundError("Reserva inválida o cancelada.");
 
+      const tour = await tx.query.tours.findFirst({
+        where: eq(tours.id, booking.tourId),
+        columns: { price: true, departureDateTime: true, returnDate: true, cancelledAt: true },
+      });
+      // Modo Auditoría (OBS-004): un tour FINALIZADO o CANCELADO no libera lugares.
+      if (tour) assertTourNotInAuditMode(tour);
+
       const magicToken = await tx.query.magicTokens.findFirst({
         where: eq(magicTokens.bookingId, bookingId),
       });
@@ -647,10 +672,6 @@ export class BookingService {
         throw new BusinessRuleError("No hay lugares pendientes de registro para eliminar.");
       }
 
-      const tour = await tx.query.tours.findFirst({
-        where: eq(tours.id, booking.tourId),
-        columns: { price: true },
-      });
       // Precio pactado de un lugar (no el precio actual del tour).
       const unitPrice = resolveAgreedUnitPrice({
         unitPrice: booking.unitPrice,
@@ -697,10 +718,21 @@ export class BookingService {
       // 1. Fail-Fast: Buscar reserva
       const booking = await tx.query.bookings.findFirst({
         where: and(eq(bookings.id, bookingId), eq(bookings.agencyId, agencyId)),
-        with: { tour: { columns: { currency: true } } },
+        with: {
+          tour: {
+            columns: {
+              currency: true,
+              departureDateTime: true,
+              returnDate: true,
+              cancelledAt: true,
+            },
+          },
+        },
       });
 
       if (!booking) throw new NotFoundError("Reserva no encontrada");
+      // Modo Auditoría (OBS-004): un tour FINALIZADO o CANCELADO no admite cancelaciones.
+      if (booking.tour) assertTourNotInAuditMode(booking.tour);
       if (booking.status === "CANCELLED") {
         throw new ConflictError("La reserva ya se encuentra cancelada");
       }
@@ -828,8 +860,13 @@ export class BookingService {
           eq(bookings.agencyId, agencyId),
           isNull(bookings.deletedAt),
         ),
+        with: {
+          tour: { columns: { departureDateTime: true, returnDate: true, cancelledAt: true } },
+        },
       });
       if (!booking) throw new NotFoundError("Reserva no encontrada");
+      // Modo Auditoría (OBS-004): un tour FINALIZADO o CANCELADO no admite transferencias.
+      if (booking.tour) assertTourNotInAuditMode(booking.tour);
       if (booking.status === "CANCELLED") {
         throw new ConflictError("No se puede transferir un lugar de una reserva cancelada.");
       }
