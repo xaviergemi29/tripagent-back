@@ -587,31 +587,6 @@ describe("Flujos financieros y de grupo (de punta a punta)", () => {
       assert.equal(fake.writes.length, writesAfterCancel);
       assert.equal(fake.booking(BOOKING).amountPaid, 900);
     });
-
-    it("por porcentaje (PATCH /:id/cancel): retención = total × %", async () => {
-      const fake = scenario();
-      const res = await app.inject({
-        method: "PATCH",
-        url: `/api/bookings/${BOOKING}/cancel`,
-        cookies: cookies(),
-        payload: { penaltyPercentage: 50 },
-      });
-      assert.equal(res.statusCode, 200);
-      assert.equal(fake.booking(BOOKING).totalPrice, 1500);
-      assert.equal(fake.booking(BOOKING).status, "CANCELLED");
-    });
-
-    it("por porcentaje con retención menor a lo abonado → 400 sin escribir", async () => {
-      const fake = scenario({ ledger: [{ amount: 2000 }] });
-      const res = await app.inject({
-        method: "PATCH",
-        url: `/api/bookings/${BOOKING}/cancel`,
-        cookies: cookies(),
-        payload: { penaltyPercentage: 50 }, // $1,500 < $2,000 abonados
-      });
-      assert.equal(res.statusCode, 400);
-      assert.equal(fake.writes.length, 0);
-    });
   });
 
   // ─────────────────────────────────────────────────────────────────────────────────────────────

@@ -329,7 +329,9 @@ describe("Cupo y sobreventa", () => {
 
     it("PATCH solo con staffCapacity se valida contra la capacidad guardada → 400", async () => {
       // updateTour lee la fila del tour con SELECT … FOR UPDATE dentro de la transacción.
-      const tx = { select: () => chain([{ maxCapacity: 10, staffCapacity: 0 }]) };
+      const tx = {
+        select: () => chain([{ maxCapacity: 10, staffCapacity: 0, acceptsCash: true }]),
+      };
       mock.method(db, "transaction", (async (fn: (t: unknown) => unknown) => fn(tx)) as never);
 
       const res = await app.inject({

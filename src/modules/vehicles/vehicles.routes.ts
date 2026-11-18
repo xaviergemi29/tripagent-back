@@ -1,9 +1,12 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { createVehicleBodySchema } from "./vehicles.schema.js";
 import { VehiclesService } from "./vehicles.service.js";
 
-/** Unidades (vehículos) de la agencia de la sesión. Prefijo: /api/vehicles. */
+/**
+ * Unidades (vehículos) de la agencia de la sesión. Prefijo: /api/vehicles. Solo lectura: las
+ * unidades se crean desde el catálogo de plantillas al asignarlas a un tour
+ * (`PATCH /tours/:id/vehicle` con `templateId`). `POST /` se eliminó el 2026-11-17 (OBS-024).
+ */
 export async function vehicleRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
@@ -11,14 +14,4 @@ export async function vehicleRoutes(app: FastifyInstance) {
     const data = await VehiclesService.getAllVehicles(request.user.agencyId);
     return reply.send(data);
   });
-
-  // Unidad con croquis propio (validado con layoutMapSchema), ligada a la agencia de la sesión.
-  server.post(
-    "/",
-    { onRequest: [app.authenticate], schema: { body: createVehicleBodySchema } },
-    async (request, reply) => {
-      const vehicle = await VehiclesService.createVehicle(request.body, request.user.agencyId);
-      return reply.status(201).send(vehicle);
-    },
-  );
 }

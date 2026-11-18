@@ -1,8 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import {
-  getAgencybyIdParamSchema,
   updateAgencyBodySchema,
+  updateBankAccountBodySchema,
   updateBrandingBodySchema,
   updatePoliciesBodySchema,
 } from "./agency.schema.js";
@@ -61,6 +61,19 @@ export async function agencyRoute(app: FastifyInstance) {
     if (!subscription) return reply.status(404).send({ error: "Agencia no encontrada" });
     return reply.status(200).send({ data: subscription });
   });
+
+  // Cuenta para transferencias (OBS-038): el modal "Configurar cuenta ahora" del formulario de
+  // tours guarda solo banco, titular y CLABE. Responde { data: { bankName, bankAccountHolder,
+  // clabeNumber } }.
+  server.patch(
+    "/bank-account",
+    { onRequest: [app.authenticate], schema: { body: updateBankAccountBodySchema } },
+    async (request, reply) => {
+      const updated = await Agency.updateBankAccount(request.user.agencyId, request.body);
+      if (!updated) return reply.status(404).send({ error: "Agencia no encontrada" });
+      return reply.status(200).send({ data: updated });
+    },
+  );
 
   // Políticas generales de la agencia (se leen con GET /agencies; se imprimen en el PDF).
   server.patch(
@@ -153,19 +166,4 @@ export async function agencyRoute(app: FastifyInstance) {
     const branding = await AgencyBrandingService.getBranding(agencyId);
     return reply.status(200).send({ data: branding });
   });
-
-  // Sin consumidores en el front; protegido: solo la propia agencia (403 si no).
-  server.get(
-    "/:id",
-    { onRequest: [app.authenticate], schema: { params: getAgencybyIdParamSchema } },
-    async (request, reply) => {
-      const { id } = request.params;
-      if (id !== request.user.agencyId) {
-        return reply.status(403).send({ error: "No tienes acceso a esta agencia" });
-      }
-      const agency = await Agency.findAgencyById(id);
-      if (!agency) return reply.status(404).send({ error: "Agencia no encontrada" });
-      return reply.status(200).send({ data: agency });
-    },
-  );
 }

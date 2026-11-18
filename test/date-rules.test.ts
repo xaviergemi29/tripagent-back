@@ -109,6 +109,7 @@ describe("Reglas de fechas", () => {
             departureDateTime: past,
             returnDate: shiftDays(2),
             cancelledAt: null,
+            acceptsCash: true,
           },
         ]),
     };

@@ -16,11 +16,7 @@ import { ConflictError } from "../../shared/errors/domain-errors.js";
 import { db } from "../../db/index.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
 import { bookingPassengers, bookings, tours, travelers } from "../../db/schema.js";
-import type {
-  GetTravelersQuery,
-  UpdateTravelerBody,
-  CreateTravelerBody,
-} from "./travelers.schema.js";
+import type { GetTravelersQuery, UpdateTravelerBody } from "./travelers.schema.js";
 
 /** Mensaje del 409 por WhatsApp repetido (el mismo que el del índice único en las rutas). */
 const DUPLICATE_PHONE_MESSAGE = "Ya existe un viajero registrado con ese WhatsApp";
@@ -64,16 +60,6 @@ export class TravelerService {
         birthDate: true,
       },
     });
-  }
-
-  static async createTraveler(body: CreateTravelerBody, agencyId: string) {
-    if (body.whatsappPhone) await assertPhoneAvailable(body.whatsappPhone, agencyId);
-    const [createdTraveler] = await db
-      .insert(travelers)
-      .values({ ...body, agencyId })
-      .returning();
-
-    return createdTraveler;
   }
 
   static async findTravelers(query: GetTravelersQuery, agencyId: string) {
@@ -177,21 +163,6 @@ export class TravelerService {
         hasMore: offset + data.length < Number(total),
       },
     };
-  }
-
-  /**
-   * Obtiene un viajero por su ID único (UUID).
-   * Retorna la entidad o `undefined` si no existe en la BD.
-   */
-  static async findTravelerById(id: string, agencyId: string) {
-    const traveler = await db.query.travelers.findFirst({
-      where: and(
-        eq(travelers.id, id),
-        eq(travelers.agencyId, agencyId),
-        isNull(travelers.deletedAt),
-      ),
-    });
-    return traveler;
   }
 
   /**

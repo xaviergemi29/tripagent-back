@@ -129,6 +129,10 @@ describe("Ciclo de vida del tour", () => {
       currency: "MXN",
       depositPerPerson: 500,
       brochureUrl: null,
+      // Al menos un método de cobro guardado (OBS-038).
+      acceptsBankTransfer: false,
+      acceptsCreditCard: false,
+      acceptsCash: true,
     };
 
     it("cambiar la moneda con pagos registrados → 409 y no actualiza", async () => {
@@ -261,6 +265,41 @@ describe("Ciclo de vida del tour", () => {
 
       assert.equal(res.statusCode, 200);
       assert.deepEqual(Object.keys(payloads[0]!).sort(), ["title", "updatedAt"]);
+    });
+
+    // OBS-038 (2026-11-17): al menos un método de cobro, combinando lo enviado con lo guardado.
+    it("PATCH que apaga el único método de cobro → 400 sin escribir", async () => {
+      const { update } = updateSpy();
+      mockTransaction({ select: selectSequence([current]), update });
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/tours/${TOUR_ID}`,
+        cookies: cookies(),
+        payload: { acceptsCash: false },
+      });
+
+      assert.equal(res.statusCode, 400);
+      assert.equal(
+        res.json().error,
+        "Debes habilitar al menos un método de cobro para tus viajeros",
+      );
+      assert.equal(update.mock.callCount(), 0);
+    });
+
+    it("PATCH que cambia efectivo por transferencia → 200 (aunque la agencia aún no tenga CLABE)", async () => {
+      const { update, payloads } = updateSpy();
+      mockTransaction({ select: selectSequence([current]), update });
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/tours/${TOUR_ID}`,
+        cookies: cookies(),
+        payload: { acceptsCash: false, acceptsBankTransfer: true },
+      });
+
+      assert.equal(res.statusCode, 200, res.body);
+      assert.equal(payloads[0]?.acceptsBankTransfer, true);
     });
 
     it("el tour ya no tiene políticas propias: un `policies` enviado se ignora", async () => {

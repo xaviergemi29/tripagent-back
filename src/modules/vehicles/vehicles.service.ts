@@ -1,6 +1,5 @@
 import { desc, eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import type { CreateVehicleBody } from "./vehicles.schema.js";
 import { vehicles } from "../../db/schema.js";
 import { getVehicleCapacity } from "../../shared/utils/vehicle-layout.util.js";
 
@@ -21,18 +20,5 @@ export class VehiclesService {
       capacity: getVehicleCapacity(vehicle.layoutMap),
       createdAt: vehicle.createdAt,
     }));
-  }
-
-  static async createVehicle(data: CreateVehicleBody, agencyId: string) {
-    const [newVehicle] = await db
-      .insert(vehicles)
-      .values({
-        agencyId,
-        name: data.name,
-        layoutMap: data.layoutMap,
-      })
-      .returning();
-
-    return newVehicle;
   }
 }

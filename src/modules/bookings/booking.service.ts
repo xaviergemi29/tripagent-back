@@ -494,56 +494,6 @@ export class BookingService {
     };
   }
 
-  /**
-   * Cancelación total con penalización en PORCENTAJE (`PATCH /bookings/:id/cancel`; el front usa
-   * `cancel-full` con monto). Delega en `applyFullCancellation`, la única implementación: antes
-   * duplicaba la lógica y no liberaba los asientos (`seatLabel`) de los pasajeros cancelados.
-   * Penalización = total × % / 100 (misma fórmula que antes).
-   */
-  static async cancelBooking(bookingId: string, penaltyPercentage: number, agencyId: string) {
-    return db.transaction(async (tx) => {
-      await lockBookingForUpdate(tx, bookingId, agencyId);
-      const booking = await tx.query.bookings.findFirst({
-        where: and(
-          eq(bookings.id, bookingId),
-          eq(bookings.agencyId, agencyId),
-          isNull(bookings.deletedAt),
-        ),
-        with: {
-          tour: {
-            columns: {
-              currency: true,
-              departureDateTime: true,
-              returnDate: true,
-              cancelledAt: true,
-            },
-          },
-        },
-      });
-
-      if (!booking) throw new NotFoundError("Reserva no encontrada");
-      // Modo Auditoría (OBS-004): un tour FINALIZADO o CANCELADO no admite cancelaciones.
-      if (booking.tour) assertTourNotInAuditMode(booking.tour);
-      if (booking.status === "CANCELLED") {
-        throw new ConflictError("La reserva ya se encuentra cancelada");
-      }
-
-      const penaltyAmount =
-        Math.round(Number(booking.totalPrice) * (penaltyPercentage / 100) * 100) / 100;
-      BookingService.assertClientRetention(booking, penaltyAmount);
-      const financialSummary = await BookingService.applyFullCancellation(
-        tx,
-        booking,
-        penaltyAmount,
-      );
-
-      return {
-        message: "Reserva cancelada exitosamente. Los asientos han sido liberados.",
-        financialSummary,
-      };
-    });
-  }
-
   static async addPassengerToBooking(bookingId: string, tourId: string, agencyId: string) {
     return db.transaction(async (tx) => {
       // 1. Validar la reserva maestra y su pertenencia a la agencia

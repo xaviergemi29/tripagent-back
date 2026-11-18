@@ -248,8 +248,7 @@ export class DashboardService {
         boardingPointDetails: toBoardingPointDetails(titularRow.boardingPoint),
         magicToken: booking.magicToken?.token || null,
 
-        paymentStatus: booking.paymentStatus as
-          "PENDING" | "ADVANCE" | "PAID" | "PENDING_VALIDATION",
+        paymentStatus: booking.paymentStatus, // PENDING | PARTIAL | PAID | REFUNDED (enum de BD)
         paidAmount: amountPaid,
         balance,
         retainedPenaltyTotal,

@@ -41,7 +41,12 @@ import { getLayoutSeatLabels, getVehicleCapacity } from "../../shared/utils/vehi
 import { VehicleTemplatesService } from "../vehicle-templates/vehicle-templates.service.js";
 import { BookingCapacityService } from "../bookings/booking-capacity.service.js";
 import { BookingStatusService } from "../bookings/booking-status.service.js";
-import { FROZEN_PRICING_ERROR, STAFF_CAPACITY_ERROR } from "./tours.schema.js";
+import {
+  FROZEN_PRICING_ERROR,
+  PAYMENT_METHOD_REQUIRED_ERROR,
+  STAFF_CAPACITY_ERROR,
+  hasAnyPaymentMethod,
+} from "./tours.schema.js";
 import { removeUpload } from "../../shared/storage/uploads.js";
 import { isPastDate, PAST_DEPARTURE_ERROR } from "../../shared/utils/mexico-date.util.js";
 
@@ -197,6 +202,9 @@ export class TourService {
           departureDateTime: tours.departureDateTime,
           returnDate: tours.returnDate,
           cancelledAt: tours.cancelledAt,
+          acceptsBankTransfer: tours.acceptsBankTransfer,
+          acceptsCreditCard: tours.acceptsCreditCard,
+          acceptsCash: tours.acceptsCash,
         })
         .from(tours)
         .where(and(eq(tours.id, id), eq(tours.agencyId, agencyId), isNull(tours.deletedAt)))
@@ -206,6 +214,17 @@ export class TourService {
       // Modo Auditoría (OBS-004; decisión del usuario, 2026-11-17): un tour FINALIZADO o CANCELADO
       // no se edita. El listado oculta "Editar Tour" en esos estados.
       assertTourNotInAuditMode(current);
+
+      // Al menos un método de cobro (OBS-038): lo enviado en el PATCH sobre lo guardado.
+      if (
+        !hasAnyPaymentMethod({
+          acceptsBankTransfer: restData.acceptsBankTransfer ?? current.acceptsBankTransfer,
+          acceptsCreditCard: restData.acceptsCreditCard ?? current.acceptsCreditCard,
+          acceptsCash: restData.acceptsCash ?? current.acceptsCash,
+        })
+      ) {
+        throw new BusinessRuleError(PAYMENT_METHOD_REQUIRED_ERROR);
+      }
 
       // La salida no se mueve al pasado (2026-11-17): un tour con reservas pasaría a FINALIZADO.
       // Conservar la fecha guardada (aunque ya haya pasado) sí se permite.

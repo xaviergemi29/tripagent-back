@@ -139,10 +139,6 @@ export const cancelBookingParamsSchema = z.object({
   id: z.uuid("ID de reserva inválido"),
 });
 
-export const cancelBookingBodySchema = z.object({
-  penaltyPercentage: z.number().min(0).max(100).default(0),
-});
-
 export const addPassengerToBookingBody = z.object({
   tourId: z.uuid("ID de tour inválido"),
 });

@@ -86,11 +86,27 @@ interface TourRefinementInput {
   staffCapacity?: number | undefined;
   depositPerPerson?: number | undefined;
   price?: number | undefined;
+  acceptsBankTransfer?: boolean | undefined;
   acceptsCreditCard?: boolean | undefined;
   paymentLink?: string | null | undefined;
   acceptsCash?: boolean | undefined;
   cashInstructions?: string | null | undefined;
 }
+
+/**
+ * Al menos un método de cobro activo (OBS-038, decisión del PM, 2026-11-17). Mismo texto que el
+ * formulario del front. La transferencia cuenta aunque la agencia aún no tenga CLABE: el tour se
+ * puede guardar y el Magic Link ofrece pedir los datos por WhatsApp.
+ */
+export const PAYMENT_METHOD_REQUIRED_ERROR =
+  "Debes habilitar al menos un método de cobro para tus viajeros";
+
+export const hasAnyPaymentMethod = (methods: {
+  acceptsBankTransfer?: boolean | null | undefined;
+  acceptsCreditCard?: boolean | null | undefined;
+  acceptsCash?: boolean | null | undefined;
+}): boolean =>
+  Boolean(methods.acceptsBankTransfer || methods.acceptsCreditCard || methods.acceptsCash);
 
 function withTourRefinements<T extends z.ZodTypeAny>(schema: T) {
   return schema.superRefine((raw: unknown, ctx) => {
@@ -116,6 +132,21 @@ function withTourRefinements<T extends z.ZodTypeAny>(schema: T) {
         code: "custom",
         message: "El anticipo no puede ser mayor al precio total del tour",
         path: ["depositPerPerson"],
+      });
+    }
+
+    // Solo cuando llegan los tres (crear: con sus valores por defecto). En un PATCH parcial lo valida
+    // `TourService.updateTour` combinando lo enviado con lo guardado.
+    if (
+      data.acceptsBankTransfer !== undefined &&
+      data.acceptsCreditCard !== undefined &&
+      data.acceptsCash !== undefined &&
+      !hasAnyPaymentMethod(data)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: PAYMENT_METHOD_REQUIRED_ERROR,
+        path: ["acceptsBankTransfer"],
       });
     }
 

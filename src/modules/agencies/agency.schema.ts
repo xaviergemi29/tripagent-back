@@ -93,12 +93,31 @@ export const updateBrandingBodySchema = z
   })
   .partial();
 
+/**
+ * PATCH /agencies/bank-account (OBS-038, 2026-11-17): solo la cuenta para transferencias, desde el
+ * modal "Configurar cuenta ahora" del formulario de tours (sin salir del formulario ni reenviar el
+ * perfil completo). Mismas reglas que `PATCH /agencies`: CLABE de 18 dígitos (obligatoria), banco
+ * y titular opcionales (vacío → null).
+ */
+export const updateBankAccountBodySchema = z.object({
+  bankName: z
+    .string()
+    .trim()
+    .max(100)
+    .nullish()
+    .transform((value) => value || null),
+  bankAccountHolder: z
+    .string()
+    .trim()
+    .max(255)
+    .nullish()
+    .transform((value) => value || null),
+  clabeNumber: baseAgencySchema.shape.clabeNumber,
+});
+
 /** PATCH /agencies/policies: políticas generales de la agencia. `""` o `null` las quita. */
 export const updatePoliciesBodySchema = z.object({ policies: policiesTextSchema });
 
-export const getAgencybyIdParamSchema = z.object({
-  id: z.uuid("El ID de la agencia debe ser un UUID válido"),
-});
-
 export type UpdateAgencyBody = z.infer<typeof updateAgencyBodySchema>;
+export type UpdateBankAccountBody = z.infer<typeof updateBankAccountBodySchema>;
 export type UpdateBrandingBody = z.infer<typeof updateBrandingBodySchema>;

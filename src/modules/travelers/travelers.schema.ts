@@ -62,11 +62,9 @@ export function refineTravelerPhones(
   );
 }
 
-export const createTravelerBodySchema = baseTravelerSchema.superRefine(refineTravelerPhones);
 export const updateTravelerBodySchema = baseTravelerSchema
   .partial()
   .superRefine(refineTravelerPhones);
 
-export type CreateTravelerBody = z.infer<typeof createTravelerBodySchema>;
 export type UpdateTravelerBody = z.infer<typeof updateTravelerBodySchema>;
 export type GetTravelersQuery = z.infer<typeof getTravelersQuerySchema>;

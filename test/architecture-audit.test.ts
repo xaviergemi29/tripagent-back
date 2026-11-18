@@ -224,6 +224,25 @@ describe("Auditoría 2026-11-15", () => {
       });
       assert.equal(res.statusCode, 404);
     });
+
+    // OBS-024 (2026-11-17): endpoints sin consumidor en el front, eliminados con sus servicios.
+    for (const [method, url, payload] of [
+      ["GET", `/api/agencies/${AGENCY_A}`, undefined],
+      ["PATCH", `/api/bookings/${BOOKING_ID}/cancel`, { penaltyPercentage: 50 }],
+      ["GET", "/api/travelers/7b2a0c1e-3f4d-4e5a-9b6c-1d2e3f4a5b6c", undefined],
+      ["POST", "/api/travelers", { fullName: "Ana Ruiz", emergencyContactName: "Luis" }],
+      ["POST", "/api/vehicles", { name: "Unidad propia", layoutMap: [["1", "AISLE", "2"]] }],
+    ] as const) {
+      it(`${method} ${url.replace(/[0-9a-f-]{36}/, ":id")} ya no existe → 404`, async () => {
+        const res = await app.inject({
+          method,
+          url,
+          cookies: cookiesA(),
+          ...(payload ? { payload } : {}),
+        });
+        assert.equal(res.statusCode, 404);
+      });
+    }
   });
 
   describe("Pagos: candado de la reserva y anulación única", () => {
@@ -466,64 +485,6 @@ describe("Auditoría 2026-11-15", () => {
 
       assert.equal(res.statusCode, 200);
       assert.equal(res.json().travelers[0].equivalentMXN, 2000); // 4000 − 2000 (antes 6000)
-    });
-  });
-
-  describe("Cancelación por porcentaje (`PATCH /bookings/:id/cancel`)", () => {
-    it("usa la misma lógica que cancel-full: libera asientos y la penalización es total × %", async () => {
-      const payloads: Record<string, unknown>[] = [];
-      mockTransaction({
-        select: () => chain([{ id: BOOKING_ID }]),
-        query: {
-          bookings: {
-            findFirst: async () => ({
-              id: BOOKING_ID,
-              status: "CONFIRMED",
-              totalPrice: 2000,
-              amountPaid: 1000,
-              paymentStatus: "PARTIAL",
-            }),
-          },
-        },
-        update: () => ({
-          set: (values: Record<string, unknown>) => {
-            payloads.push(values);
-            return chain(undefined);
-          },
-        }),
-      });
-
-      const res = await app.inject({
-        method: "PATCH",
-        url: `/api/bookings/${BOOKING_ID}/cancel`,
-        cookies: cookiesA(),
-        // 50 % = $1,000 = lo abonado (la retención del cliente no baja de lo pagado, 2026-11-17).
-        payload: { penaltyPercentage: 50 },
-      });
-
-      assert.equal(res.statusCode, 200);
-      const [passengers, booking] = payloads;
-      assert.equal(passengers?.seatLabel, null, "los asientos se liberan (antes no)");
-      assert.equal(booking?.status, "CANCELLED");
-      assert.equal(booking?.totalPrice, 1000);
-      assert.deepEqual(res.json().data.financialSummary, {
-        previousTotal: 2000,
-        newTotal: 1000,
-        amountPaid: 1000,
-        hasSurplus: false,
-        surplusAmount: 0,
-      });
-    });
-
-    it("reserva de otra agencia → 404", async () => {
-      mockTransaction({ select: () => chain([]) });
-      const res = await app.inject({
-        method: "PATCH",
-        url: `/api/bookings/${BOOKING_ID}/cancel`,
-        cookies: sessionCookie(app, AGENCY_B, USER_A),
-        payload: { penaltyPercentage: 0 },
-      });
-      assert.equal(res.statusCode, 404);
     });
   });
 });

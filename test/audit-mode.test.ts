@@ -159,12 +159,6 @@ describe("Modo Auditoría en la API (OBS-004)", () => {
         { penaltyAmount: 1000 },
       ],
       [
-        "cancelar la reserva por porcentaje",
-        "PATCH",
-        `/api/bookings/${BOOKING}/cancel`,
-        { penaltyPercentage: 50 },
-      ],
-      [
         "transferir un lugar",
         "PATCH",
         `/api/bookings/${BOOKING}/transfer`,

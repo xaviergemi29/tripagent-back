@@ -3,7 +3,6 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import {
   addPassengerToBookingBody,
   bookingByIdParamsSchema,
-  cancelBookingBodySchema,
   cancelBookingParamsSchema,
   cancelFullBookingBodySchema,
   publicRegisterBodySchema,
@@ -51,23 +50,6 @@ export async function bookingRoutes(app: FastifyInstance) {
         request.user.agencyId,
       );
       return reply.status(201).send({ success: true, data: result });
-    },
-  );
-
-  // Cancelación total con penalización en porcentaje (sin uso en el front, que usa cancel-full).
-  server.patch(
-    "/:id/cancel",
-    {
-      onRequest: [app.authenticate],
-      schema: { params: cancelBookingParamsSchema, body: cancelBookingBodySchema },
-    },
-    async (request, reply) => {
-      const result = await BookingService.cancelBooking(
-        request.params.id,
-        request.body.penaltyPercentage,
-        request.user.agencyId,
-      );
-      return reply.status(200).send({ success: true, data: result });
     },
   );
 
