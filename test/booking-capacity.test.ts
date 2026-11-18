@@ -27,6 +27,8 @@ const baseTour = {
   departureDateTime: "2026-12-20",
   cancelledAt: null,
   deletedAt: null,
+  // Agencia con plan activo: la pre-reserva no está en pausa por suscripción.
+  agency: { subscriptionStatus: "active", trialEndsAt: null, createdAt: "2026-01-01T00:00:00Z" },
 };
 
 /** Reservas activas: grupos de 4 y 2 → 6 ocupados (2 disponibles). */

@@ -5,6 +5,8 @@ import {
   SUBSCRIPTION_PLAN,
   buildSpeiReference,
   computeTrialProgress,
+  isAgencyReadOnly,
+  isSubscriptionReadOnly,
   resolveSubscriptionBillingConfig,
   resolveTrialEndsAt,
   toMexicoDate,
@@ -40,6 +42,18 @@ export class AgencySubscriptionService {
     return db.$count(travelers, and(eq(travelers.agencyId, agencyId), isNull(travelers.deletedAt)));
   }
 
+  /**
+   * Modo Solo Lectura de la agencia (candado de `app.authenticate` en las mutaciones). Una agencia
+   * inexistente se trata como en solo lectura: falla cerrado.
+   */
+  static async isReadOnly(agencyId: string, now: Date = new Date()): Promise<boolean> {
+    const agency = await db.query.agencies.findFirst({
+      where: eq(agencies.id, agencyId),
+      columns: { subscriptionStatus: true, trialEndsAt: true, createdAt: true },
+    });
+    return agency ? isAgencyReadOnly(agency, now) : true;
+  }
+
   static async getSubscription(
     agencyId: string,
     now: Date = new Date(),
@@ -63,10 +77,13 @@ export class AgencySubscriptionService {
     ]);
 
     const trialEndsAt = resolveTrialEndsAt(agency.trialEndsAt, agency.createdAt);
+    const trialProgress = computeTrialProgress(trialEndsAt, now);
 
     return {
       status: agency.subscriptionStatus,
-      ...computeTrialProgress(trialEndsAt, now),
+      ...trialProgress,
+      // Modo Solo Lectura (2026-11-18): el front lo usa tal cual, sin recalcular la regla.
+      isReadOnly: isSubscriptionReadOnly(agency.subscriptionStatus, trialProgress.trialExpired),
       trialEndsAt,
       priceMxn: SUBSCRIPTION_PLAN.priceMxn,
       metrics: { activeToursCount, registeredTravelersCount },

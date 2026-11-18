@@ -34,6 +34,11 @@ import {
 } from "./shared/security/security.config.js";
 import { rateLimitErrorResponse } from "./shared/security/rate-limits.js";
 import { AuthService, INACTIVE_USER_MESSAGE } from "./modules/auth/auth.service.js";
+import { AgencySubscriptionService } from "./modules/agencies/agency-subscription.service.js";
+import {
+  SUBSCRIPTION_READ_ONLY_CODE,
+  SUBSCRIPTION_READ_ONLY_MESSAGE,
+} from "./shared/utils/subscription.util.js";
 import { BusinessRuleError, ConflictError, NotFoundError } from "./shared/errors/domain-errors.js";
 import { GENERIC_ERROR_MESSAGE } from "./shared/security/error-message.util.js";
 
@@ -45,10 +50,27 @@ export interface BuildAppOptions {
    * (`AuthService.isSessionActive`); las pruebas lo sustituyen porque no tocan Neon.
    */
   isSessionActive?: (userId: string, agencyId: string) => Promise<boolean>;
+  /**
+   * Modo Solo Lectura por suscripción (2026-11-18). Por defecto consulta la agencia
+   * (`AgencySubscriptionService.isReadOnly`); las pruebas lo sustituyen.
+   */
+  isAgencyReadOnly?: (agencyId: string) => Promise<boolean>;
 }
+
+/** Métodos que no cambian datos: siempre permitidos en Modo Solo Lectura. */
+const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * Mutaciones autenticadas permitidas en Modo Solo Lectura: no son operaciones de negocio. Cerrar
+ * sesión no pasa por `authenticate`; cambiar la contraseña es seguridad de la cuenta.
+ */
+const READ_ONLY_ALLOWED_ROUTES = new Set(["/api/auth/change-password"]);
 
 export const buildApp = async (options: BuildAppOptions = {}) => {
   const isSessionActive = options.isSessionActive ?? AuthService.isSessionActive;
+  const isAgencyReadOnly =
+    options.isAgencyReadOnly ??
+    ((agencyId: string) => AgencySubscriptionService.isReadOnly(agencyId));
   // Falla cerrado: sin secretos fuertes (o sin CORS_ORIGINS en producción) la API no arranca.
   const { jwtSecret, cookieSecret } = resolveSecrets();
   const corsOrigin = resolveCorsOrigin();
@@ -118,6 +140,25 @@ export const buildApp = async (options: BuildAppOptions = {}) => {
     } catch (err) {
       request.log.error(err, "No se pudo verificar la sesión");
       return reply.status(500).send({ error: "Error interno del servidor" });
+    }
+
+    // Modo Solo Lectura por suscripción (feedback del PM, 2026-11-18): con la prueba vencida o el
+    // pago pendiente, toda mutación de negocio responde 402 sin llegar a la ruta. Las lecturas
+    // (tours, Centro de Control, manifiesto, viajeros, Configuración, Suscripción) siguen abiertas.
+    if (
+      !READ_METHODS.has(request.method) &&
+      !READ_ONLY_ALLOWED_ROUTES.has(request.routeOptions.url ?? "")
+    ) {
+      try {
+        if (await isAgencyReadOnly(request.user.agencyId)) {
+          return reply
+            .status(402)
+            .send({ error: SUBSCRIPTION_READ_ONLY_MESSAGE, code: SUBSCRIPTION_READ_ONLY_CODE });
+        }
+      } catch (err) {
+        request.log.error(err, "No se pudo verificar la suscripción");
+        return reply.status(500).send({ error: "Error interno del servidor" });
+      }
     }
   });
 

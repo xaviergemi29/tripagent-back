@@ -230,6 +230,7 @@ describe("GET /api/tour-brochure/public/tours/:id (folleto público)", () => {
         availableSeats: 11,
         isBookable: true,
         hasDeparted: false,
+        acceptsOnlineBookings: true,
       });
     });
 

@@ -19,18 +19,30 @@ const DUMMY_PASSWORD_HASH = "$2b$12$rqmve/ixJqL.zNShM7WJs.Xtz08N/a4.KjwuXAop/HH9
 export const INACTIVE_USER_MESSAGE =
   "Tu usuario fue desactivado. Contacta al administrador de tu agencia.";
 
+/**
+ * La agencia sigue habilitada: `agencies.isActive` y sin borrado lógico. Es el bloqueo total por
+ * impago (feedback del PM, 2026-11-18): TripAgent pone `isActive = false` tras 15 días de prueba
+ * vencida o pago pendiente y todos sus usuarios pierden el acceso (401). Hasta entonces la agencia
+ * solo queda en Modo Solo Lectura. Falla cerrado: sin la fila de la agencia no hay acceso.
+ */
+const isAgencyEnabled = (
+  agency: { isActive: boolean; deletedAt: string | null } | null | undefined,
+) => Boolean(agency?.isActive && !agency.deletedAt);
+
 export class AuthService {
   /**
    * Sesión revocable (decisión del PM, 2026-11-14): el JWT dura 24 h, pero en cada petición
    * autenticada se confirma que el usuario siga activo y pertenezca a la agencia del token. Si el
-   * admin lo desactiva a las 11:00, a las 11:01 sus peticiones responden 401.
+   * admin lo desactiva a las 11:00, a las 11:01 sus peticiones responden 401. Desde el 2026-11-18
+   * también se corta si la agencia está desactivada o borrada (bloqueo total por impago).
    */
   static async isSessionActive(userId: string, agencyId: string): Promise<boolean> {
     const user = await db.query.agencyUsers.findFirst({
       where: and(eq(agencyUsers.id, userId), eq(agencyUsers.agencyId, agencyId)),
       columns: { isActive: true },
+      with: { agency: { columns: { isActive: true, deletedAt: true } } },
     });
-    return Boolean(user?.isActive);
+    return Boolean(user?.isActive) && isAgencyEnabled(user?.agency);
   }
 
   static async authenticate(data: LoginBody) {
@@ -45,6 +57,7 @@ export class AuthService {
         role: true,
         passwordHash: true,
       },
+      with: { agency: { columns: { isActive: true, deletedAt: true } } },
     });
 
     // 2. Comparar la contraseña en texto plano con el hash guardado en la BD (o con el hash de
@@ -53,7 +66,8 @@ export class AuthService {
       data.password,
       user?.passwordHash ?? DUMMY_PASSWORD_HASH,
     );
-    if (!user || !isPasswordValid) {
+    // Agencia desactivada (bloqueo total por impago): mismo mensaje que unas credenciales inválidas.
+    if (!user || !isPasswordValid || !isAgencyEnabled(user.agency)) {
       throw new Error(INVALID_CREDENTIALS_MESSAGE);
     }
 

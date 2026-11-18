@@ -19,6 +19,10 @@ import { BookingStatusService } from "./booking-status.service.js";
 import { BookingCapacityService } from "./booking-capacity.service.js";
 import { lockBookingForUpdate } from "./booking-lock.util.js";
 import {
+  PUBLIC_BOOKINGS_PAUSED_MESSAGE,
+  isAgencyReadOnly,
+} from "../../shared/utils/subscription.util.js";
+import {
   BusinessRuleError,
   ConflictError,
   NotFoundError,
@@ -358,6 +362,9 @@ export class BookingService {
           returnDate: true,
           cancelledAt: true,
         },
+        with: {
+          agency: { columns: { subscriptionStatus: true, trialEndsAt: true, createdAt: true } },
+        },
       });
       if (!tour) throw new NotFoundError("Tour no encontrado");
 
@@ -366,6 +373,10 @@ export class BookingService {
         TOUR_TEMPORAL_STATUS.UPCOMING
       ) {
         throw new ConflictError("Este tour ya no admite reservas en línea.");
+      }
+      // Agencia en Modo Solo Lectura (2026-11-18): el folleto sigue visible, sin pre-reservas.
+      if (isAgencyReadOnly(tour.agency)) {
+        throw new ConflictError(PUBLIC_BOOKINGS_PAUSED_MESSAGE);
       }
 
       await BookingService.reserveSeats(tx, tour, {

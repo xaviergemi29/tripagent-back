@@ -14,9 +14,16 @@ export type TestApp = Awaited<ReturnType<typeof buildApp>>;
  * `isSessionActive` (por defecto, todos los usuarios activos).
  */
 export async function createTestApp(
-  options: { isSessionActive?: (userId: string, agencyId: string) => Promise<boolean> } = {},
+  options: {
+    isSessionActive?: (userId: string, agencyId: string) => Promise<boolean>;
+    isAgencyReadOnly?: (agencyId: string) => Promise<boolean>;
+  } = {},
 ): Promise<TestApp> {
-  const app = await buildApp({ isSessionActive: options.isSessionActive ?? (async () => true) });
+  const app = await buildApp({
+    isSessionActive: options.isSessionActive ?? (async () => true),
+    // Por defecto la agencia opera normal (sin Modo Solo Lectura por suscripción).
+    isAgencyReadOnly: options.isAgencyReadOnly ?? (async () => false),
+  });
   await app.ready();
   return app;
 }

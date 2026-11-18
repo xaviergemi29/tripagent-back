@@ -159,6 +159,7 @@ describe("API: CORS, encabezados, login y límite de intentos", () => {
       fullName: "Ana",
       role: "ADMIN",
       passwordHash: "hash",
+      agency: { isActive: true, deletedAt: null },
     })) as never);
 
     const res = await app.inject({
