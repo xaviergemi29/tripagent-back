@@ -321,6 +321,29 @@ describe("Magic Link (portal del viajero): decisiones del PM", () => {
     assert.equal(empty.json().data.agencyPolicies, null);
   });
 
+  it("registro (PENDING_REGISTRATION): precio por persona = precio pactado, no el precio actual del tour (OBS-040)", async () => {
+    // Apartó 4 lugares a $1,500 ($6,000); antes del primer pago el tour subió a $1,800.
+    const token = magicTokenWith("AWAITING_REGISTRATION", "PENDING", 0);
+    Object.assign(token.booking, { unitPrice: 1500 });
+    Object.assign(token.tour, { price: 1800 });
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+    const { tourInfo } = res.json().data;
+    assert.equal(tourInfo.priceTotalPerPassenger, 1500); // antes: 1800
+    // El formulario calcula lugares × precio: cuadra con el total de la reserva.
+    assert.equal(tourInfo.priceTotalPerPassenger * tourInfo.reservedSeats, 6000);
+
+    // Reserva anterior sin precio guardado: respaldo total ÷ lugares apartados.
+    mock.restoreAll();
+    const legacy = magicTokenWith("AWAITING_REGISTRATION", "PENDING", 0);
+    Object.assign(legacy.booking, { unitPrice: null });
+    Object.assign(legacy.tour, { price: 1800 });
+    mock.method(db.query.magicTokens, "findFirst", (async () => legacy) as never);
+    const legacyRes = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+    assert.equal(legacyRes.json().data.tourInfo.priceTotalPerPassenger, 1500);
+  });
+
   it("todas las vistas reciben la marca de la agencia en meta (incluida una reserva cancelada)", async () => {
     for (const [status, paymentStatus, flowState] of [
       ["CANCELLED", "PARTIAL", "CANCELLED"],

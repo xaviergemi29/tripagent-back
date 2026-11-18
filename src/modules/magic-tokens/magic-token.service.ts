@@ -3,7 +3,10 @@ import { db } from "../../db/index.js";
 import { magicTokens } from "../../db/schema.js";
 import { findBoardingPoint } from "../../shared/utils/boarding-point.util.js";
 import { AgencyBrandingService } from "../agencies/agency-branding.service.js";
-import { getExpectedGroupSize } from "../../shared/utils/booking-rules.util.js";
+import {
+  getExpectedGroupSize,
+  resolveAgreedUnitPrice,
+} from "../../shared/utils/booking-rules.util.js";
 import { summarizeRefunds } from "../../shared/utils/refund.util.js";
 
 export class MagicTokenService {
@@ -88,7 +91,15 @@ export class MagicTokenService {
           title: tour.title,
           departureDateTime: tour.departureDateTime,
           currency: tour.currency,
-          priceTotalPerPassenger: Number(tour.price),
+          // Precio PACTADO por lugar (OBS-040, 2026-11-17): el formulario calcula lugares × este precio.
+          // Antes era `tour.price` (precio actual): si la agencia lo cambiaba antes del primer pago,
+          // el cliente veía un total distinto al de su reserva.
+          priceTotalPerPassenger: resolveAgreedUnitPrice({
+            unitPrice: booking.unitPrice,
+            totalPrice: booking.totalPrice,
+            numberPassengers: magicToken.numberPassengers,
+            tourPrice: tour.price,
+          }),
           depositPerPassenger: tour.depositPerPerson ? Number(tour.depositPerPerson) : null,
           reservedSeats: magicToken.numberPassengers,
         },
