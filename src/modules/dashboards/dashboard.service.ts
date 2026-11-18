@@ -5,7 +5,9 @@ import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
 import { getVehicleCapacity } from "../../shared/utils/vehicle-layout.util.js";
 import {
   getExpectedGroupSize,
+  getRefundableSurplus,
   getRequiredDeposit,
+  getRetainedPenaltyTotal,
   getSellableCapacity,
   isDepositCovered,
   resolveAgreedUnitPrice,
@@ -216,6 +218,12 @@ export class DashboardService {
       });
 
       const balance = Math.max(0, totalPrice - amountPaid);
+      // Bajas de acompañantes (FLUJO-RES-004, 2026-11-17): retenciones acumuladas en el total y saldo
+      // a devolver al titular. Solo en reservas activas (una cancelada tiene su propia retención).
+      const retainedPenaltyTotal = isCancelled
+        ? 0
+        : getRetainedPenaltyTotal({ totalPrice, unitPrice, groupSize: expectedGroupSize });
+      const refundableSurplus = isCancelled ? 0 : getRefundableSurplus({ amountPaid, totalPrice });
 
       // 4.3 Mapeo del Titular
       const titularGroupRow = {
@@ -244,6 +252,8 @@ export class DashboardService {
           "PENDING" | "ADVANCE" | "PAID" | "PENDING_VALIDATION",
         paidAmount: amountPaid,
         balance,
+        retainedPenaltyTotal,
+        refundableSurplus,
         equivalentMXN: totalEquivalentMXN > 0 ? totalEquivalentMXN : null,
 
         payments: mappedPayments,

@@ -140,6 +140,41 @@ describe("Centro de Control: derecho a asiento por anticipo cubierto", () => {
   });
 });
 
+describe("Centro de Control: retenciones por bajas y saldo a devolver (FLUJO-RES-004)", () => {
+  let app: TestApp;
+  before(async () => {
+    app = await createTestApp();
+  });
+  after(async () => {
+    await app.close();
+  });
+  afterEach(() => mock.restoreAll());
+
+  const getDashboard = () =>
+    app.inject({
+      method: "GET",
+      url: `/api/dashboards/${TOUR_ID}`,
+      cookies: sessionCookie(app, AGENCY_A, USER_A),
+    });
+
+  it("cada titular trae `retainedPenaltyTotal` y `refundableSurplus`", async () => {
+    mock.method(db.query.tours, "findFirst", (async () => tourWithDeposit(500)) as never);
+    // A: 2 lugares a $1,000 tras una baja con $250 retenidos (total $2,250) y $3,000 abonados.
+    // B: 2 lugares sin bajas, $500 abonados.
+    mockBookings([
+      { ...bookingPaid("a", 3000), totalPrice: 2250, unitPrice: 1000, paymentStatus: "PAID" },
+      { ...bookingPaid("b", 500), unitPrice: 1000 },
+    ]);
+
+    const [a, b] = (await getDashboard()).json().travelers;
+    assert.equal(a.retainedPenaltyTotal, 250);
+    assert.equal(a.refundableSurplus, 750);
+    assert.equal(a.balance, 0);
+    assert.equal(b.retainedPenaltyTotal, 0);
+    assert.equal(b.refundableSurplus, 0);
+  });
+});
+
 describe("Centro de Control: tour cancelado y reembolsos (decisión del PM, 2026-11-14)", () => {
   let app: TestApp;
   before(async () => {

@@ -89,3 +89,51 @@ export const resolveAgreedUnitPrice = (booking: {
   }
   return Number(booking.tourPrice) || 0;
 };
+
+const roundMoney = (value: number): number => Math.round(value * 100) / 100;
+
+/**
+ * Baja de un acompañante (FLUJO-RES-004 / PQ-C5; decisión del usuario, 2026-11-17). Única regla,
+ * espejo en el front (`summarizeCompanionDrop`, vista previa del diálogo):
+ * - nuevo total = total actual − precio pactado del lugar + retención para la agencia (nunca < 0);
+ * - lo abonado (`amountPaid`, suma del libro) NO cambia;
+ * - saldo por cobrar = nuevo total − abonado (si es positivo);
+ * - saldo a devolver al titular = abonado − nuevo total (si es positivo). No se retiene en automático:
+ *   el operador lo devuelve con un reembolso (`refundableSurplus`, regla 18 de `../CLAUDE.md`).
+ * El tope de la retención (≤ precio del lugar) lo valida quien llama.
+ */
+export const summarizeCompanionDrop = (input: {
+  currentTotal: number;
+  unitPrice: number;
+  penaltyAmount: number;
+  amountPaid: number;
+}) => {
+  const newTotal = roundMoney(
+    Math.max(0, input.currentTotal - input.unitPrice + input.penaltyAmount),
+  );
+  return {
+    previousTotal: roundMoney(input.currentTotal),
+    newTotal,
+    unitPrice: roundMoney(input.unitPrice),
+    penaltyAmount: roundMoney(input.penaltyAmount),
+    nonRetainedAmount: roundMoney(Math.max(0, input.unitPrice - input.penaltyAmount)),
+    pendingBalance: roundMoney(Math.max(0, newTotal - input.amountPaid)),
+    refundableSurplus: roundMoney(Math.max(0, input.amountPaid - newTotal)),
+    amountPaid: roundMoney(input.amountPaid),
+  };
+};
+
+/**
+ * Retenciones acumuladas por bajas de acompañantes en una reserva activa: lo que el total excede al
+ * precio pactado × lugares apartados (los lugares sin registrar también se cobran a precio pactado,
+ * así que se usan los lugares apartados y no solo los pasajeros activos).
+ */
+export const getRetainedPenaltyTotal = (input: {
+  totalPrice: number;
+  unitPrice: number;
+  groupSize: number;
+}): number => roundMoney(Math.max(0, input.totalPrice - input.unitPrice * input.groupSize));
+
+/** Saldo a favor del titular en una reserva activa: lo abonado que excede al total. */
+export const getRefundableSurplus = (input: { amountPaid: number; totalPrice: number }): number =>
+  roundMoney(Math.max(0, input.amountPaid - input.totalPrice));

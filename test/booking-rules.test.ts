@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 import {
   calculateBookingStatus,
   getExpectedGroupSize,
+  getRefundableSurplus,
+  getRetainedPenaltyTotal,
   getRequiredDeposit,
   getSellableCapacity,
   isDepositCovered,
   sumOccupiedSeats,
+  summarizeCompanionDrop,
   type BookingStatus,
 } from "../src/shared/utils/booking-rules.util.js";
 
@@ -84,5 +87,57 @@ describe("Reglas de cupo (booking-rules.util)", () => {
     ];
     assert.equal(sumOccupiedSeats(rows, 1000), 8);
     assert.equal(sumOccupiedSeats([], 1000), 0);
+  });
+});
+
+// Baja de un acompañante con retención para la agencia (FLUJO-RES-004 / PQ-C5, 2026-11-17).
+describe("summarizeCompanionDrop (finanzas de la baja de un acompañante)", () => {
+  const cases: [string, Parameters<typeof summarizeCompanionDrop>[0], Record<string, number>][] = [
+    [
+      "Escenario 1: retención parcial con saldo pendiente",
+      { currentTotal: 3000, unitPrice: 1000, penaltyAmount: 250, amountPaid: 1500 },
+      { newTotal: 2250, nonRetainedAmount: 750, pendingBalance: 750, refundableSurplus: 0 },
+    ],
+    [
+      "Escenario 2: retención del 100 % del lugar",
+      { currentTotal: 6000, unitPrice: 2000, penaltyAmount: 2000, amountPaid: 6000 },
+      { newTotal: 6000, nonRetainedAmount: 0, pendingBalance: 0, refundableSurplus: 0 },
+    ],
+    [
+      "Escenario 3: sin retención",
+      { currentTotal: 3000, unitPrice: 1000, penaltyAmount: 0, amountPaid: 1000 },
+      { newTotal: 2000, nonRetainedAmount: 1000, pendingBalance: 1000, refundableSurplus: 0 },
+    ],
+    [
+      "Escenario 4: liquidada → saldo a devolver",
+      { currentTotal: 3000, unitPrice: 1000, penaltyAmount: 250, amountPaid: 3000 },
+      { newTotal: 2250, nonRetainedAmount: 750, pendingBalance: 0, refundableSurplus: 750 },
+    ],
+    [
+      "el nuevo total nunca es negativo",
+      { currentTotal: 500, unitPrice: 1000, penaltyAmount: 0, amountPaid: 0 },
+      { newTotal: 0, pendingBalance: 0, refundableSurplus: 0 },
+    ],
+  ];
+  for (const [label, input, expected] of cases) {
+    it(label, () => {
+      const summary = summarizeCompanionDrop(input);
+      for (const [key, value] of Object.entries(expected)) {
+        assert.equal(summary[key as keyof typeof summary], value, key);
+      }
+      assert.equal(summary.amountPaid, input.amountPaid); // lo abonado no cambia
+    });
+  }
+
+  it("retenciones acumuladas: lo que el total excede al precio pactado × lugares apartados", () => {
+    assert.equal(getRetainedPenaltyTotal({ totalPrice: 2250, unitPrice: 1000, groupSize: 2 }), 250);
+    assert.equal(getRetainedPenaltyTotal({ totalPrice: 3000, unitPrice: 1000, groupSize: 3 }), 0);
+    // Un lugar sin registrar no es retención: se cobra a precio pactado.
+    assert.equal(getRetainedPenaltyTotal({ totalPrice: 2000, unitPrice: 1000, groupSize: 2 }), 0);
+  });
+
+  it("saldo a devolver: lo abonado que excede al total", () => {
+    assert.equal(getRefundableSurplus({ amountPaid: 3000, totalPrice: 2250 }), 750);
+    assert.equal(getRefundableSurplus({ amountPaid: 1500, totalPrice: 2250 }), 0);
   });
 });

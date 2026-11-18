@@ -268,7 +268,10 @@ describe("Pagos en un tour cancelado: solo reembolsos", () => {
     const res = await register({ amount: 500, type: "REFUND" });
 
     assert.equal(res.statusCode, 409);
-    assert.match(res.json().error, /solo aplican cuando la agencia cancela el tour/);
+    assert.match(
+      res.json().error,
+      /cuando la agencia cancela el tour o cuando la reserva tiene saldo a devolver/,
+    );
     assert.equal(ledger.length, 1);
   });
 

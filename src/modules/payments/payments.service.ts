@@ -8,6 +8,7 @@ import {
   NotFoundError,
 } from "../../shared/errors/domain-errors.js";
 import { summarizeRefunds } from "../../shared/utils/refund.util.js";
+import { getRefundableSurplus } from "../../shared/utils/booking-rules.util.js";
 import { derivePaymentStatus, ledgerHasRefund } from "../../shared/utils/payment-status.util.js";
 import { formatMoney } from "../../shared/utils/money.util.js";
 import { BookingStatusService } from "../bookings/booking-status.service.js";
@@ -68,22 +69,37 @@ export class PaymentService {
         );
       }
 
-      // Devoluciones en efectivo SOLO cuando la agencia cancela el tour (decisión del PM, 2026-11-14):
-      // si cancela el cliente, la agencia retiene lo abonado como penalización. Las correcciones de
+      // Devoluciones en efectivo (regla 18 de `../CLAUDE.md`):
+      // - tour cancelado por la agencia (decisión del PM, 2026-11-14): tope = saldo a reembolsar
+      //   (`summarizeRefunds`);
+      // - tour NO cancelado (excepción controlada, decisión del usuario, 2026-11-17): solo si la reserva
+      //   activa tiene `refundableSurplus` > 0 (abonado > total, p. ej. tras la baja de un acompañante
+      //   con retención menor al lugar), con tope EXACTO en ese `refundableSurplus`. Con saldo a favor
+      //   en $0 → 409.
+      // Si cancela el cliente, la agencia retiene lo abonado: no hay devolución. Las correcciones de
       // captura se hacen con "Anular" (voidPayment), no con un reembolso.
-      if (data.type === "REFUND" && !booking.tour?.cancelledAt) {
-        throw new ConflictError(
-          "Los reembolsos solo aplican cuando la agencia cancela el tour. Para corregir un abono mal capturado, anúlalo.",
-        );
-      }
-
-      // Un reembolso nunca devuelve más que el saldo a reembolsar (summarizeRefunds).
       if (data.type === "REFUND") {
-        const maxRefund = summarizeRefunds({
-          amountPaid: booking.amountPaid,
-          totalPrice: booking.totalPrice,
-          payments: [],
-        }).refundableAmount;
+        let maxRefund: number;
+        if (booking.tour?.cancelledAt) {
+          maxRefund = summarizeRefunds({
+            amountPaid: booking.amountPaid,
+            totalPrice: booking.totalPrice,
+            payments: [],
+          }).refundableAmount;
+        } else {
+          maxRefund =
+            booking.status === "CANCELLED"
+              ? 0
+              : getRefundableSurplus({
+                  amountPaid: Number(booking.amountPaid),
+                  totalPrice: Number(booking.totalPrice),
+                });
+          if (maxRefund <= 0) {
+            throw new ConflictError(
+              "Solo se registra un reembolso cuando la agencia cancela el tour o cuando la reserva tiene saldo a devolver. Para corregir un abono mal capturado, anúlalo.",
+            );
+          }
+        }
         if (Math.abs(data.amount) > maxRefund + 0.005) {
           throw new BusinessRuleError(
             `El reembolso ($${Math.abs(data.amount).toFixed(2)}) supera el saldo a reembolsar ($${maxRefund.toFixed(2)}).`,

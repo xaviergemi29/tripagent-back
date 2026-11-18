@@ -9,7 +9,11 @@ import {
   NotFoundError,
 } from "../../shared/errors/domain-errors.js";
 import { bookings, bookingPassengers, magicTokens } from "../../db/schema.js";
-import { resolveAgreedUnitPrice } from "../../shared/utils/booking-rules.util.js";
+import {
+  resolveAgreedUnitPrice,
+  summarizeCompanionDrop,
+} from "../../shared/utils/booking-rules.util.js";
+import { formatMoney } from "../../shared/utils/money.util.js";
 import { derivePaymentStatus } from "../../shared/utils/payment-status.util.js";
 
 export class BookingPassengerService {
@@ -29,7 +33,13 @@ export class BookingPassengerService {
         where: and(eq(bookings.id, bookingId), eq(bookings.agencyId, agencyId)),
         with: {
           tour: {
-            columns: { price: true, departureDateTime: true, returnDate: true, cancelledAt: true },
+            columns: {
+              price: true,
+              currency: true,
+              departureDateTime: true,
+              returnDate: true,
+              cancelledAt: true,
+            },
           },
           magicToken: { columns: { numberPassengers: true } },
         },
@@ -83,10 +93,11 @@ export class BookingPassengerService {
         );
       }
 
-      // 4. Descuento: un lugar al precio PACTADO (`bookings.unitPrice`, decisión del usuario,
-      // 2026-11-17), nunca el total ya ajustado dividido entre pasajeros: ese total puede incluir
-      // retenciones y alteraba el precio de los que sí viajan. Las retenciones previas se quedan en
-      // el total, así que el nuevo total = precio × lugares restantes (+ retenciones, si las hubo).
+      // 4. Finanzas de la baja (FLUJO-RES-004 / PQ-C5; decisión del usuario, 2026-11-17). El lugar se
+      // descuenta al precio PACTADO (`bookings.unitPrice`), nunca el total ya ajustado dividido entre
+      // pasajeros. El operador puede capturar una retención para la agencia (0 … precio del lugar).
+      // Lo abonado no cambia: si supera el nuevo total, queda un saldo a devolver al titular
+      // (`refundableSurplus`) que se salda con un reembolso; ya no se retiene en automático.
       const currentTotalPrice = Number(booking.totalPrice);
       const amountPaid = Number(booking.amountPaid);
       const unitPrice = resolveAgreedUnitPrice({
@@ -96,22 +107,19 @@ export class BookingPassengerService {
         tourPrice: booking.tour?.price,
       });
 
-      // La interfaz siempre envía $0 (MVP); la API conserva el tope por si llega una retención.
-      if (penaltyAmount > unitPrice) {
+      if (penaltyAmount > unitPrice + 0.005) {
+        const currency = booking.tour?.currency ?? "MXN";
         throw new BusinessRuleError(
-          `La penalización ($${penaltyAmount}) no puede superar el precio de un lugar ($${unitPrice}).`,
+          `La retención (${formatMoney(penaltyAmount, currency)}) no puede superar el precio del lugar (${formatMoney(unitPrice, currency)}).`,
         );
       }
-      // Si el grupo ya abonó más que el nuevo total, el excedente se retiene como penalización de la
-      // baja (decisión del usuario, 2026-11-17): con $2,500 abonados de $3,000, la baja de un lugar
-      // de $1,000 deja el total en $2,500 (no $2,000) y el saldo en $0. Así nunca queda un saldo a
-      // favor sin salida (en el MVP solo hay reembolsos si la agencia cancela el tour). Tope: el precio
-      // de un lugar, contando la retención que se haya enviado.
-      const totalWithoutSeat = currentTotalPrice - unitPrice;
-      const excessPaid = amountPaid - (totalWithoutSeat + penaltyAmount);
-      const automaticRetention = Math.min(Math.max(0, excessPaid), unitPrice - penaltyAmount);
-      const retainedAmount = Math.round((penaltyAmount + automaticRetention) * 100) / 100;
-      const newTotalPrice = Math.max(0, totalWithoutSeat + retainedAmount);
+      const financialSummary = summarizeCompanionDrop({
+        currentTotal: currentTotalPrice,
+        unitPrice,
+        penaltyAmount,
+        amountPaid,
+      });
+      const newTotalPrice = financialSummary.newTotal;
 
       // 5. Bajar al pasajero del camión (Soft Delete lógico)
       await tx
@@ -146,23 +154,12 @@ export class BookingPassengerService {
       // Grupo más chico = menor anticipo requerido: el estado PENDING ⇄ CONFIRMED se recalcula.
       await BookingStatusService.syncStatus(tx, bookingId);
 
-      // 8. Handoff para el Frontend (UX)
-      const isOverpaid = amountPaid > newTotalPrice;
-      const surplusAmount = isOverpaid ? amountPaid - newTotalPrice : 0;
-
+      // 8. Resumen para el operador: { previousTotal, newTotal, unitPrice, penaltyAmount,
+      // nonRetainedAmount, pendingBalance, refundableSurplus, amountPaid }.
       return {
         message: "Pasajero cancelado exitosamente.",
         freedSeats: 1,
-        financialSummary: {
-          previousTotal: currentTotalPrice,
-          newTotal: newTotalPrice,
-          amountPaid: amountPaid,
-          // Lo que se retuvo por esta baja (enviado + excedente retenido automáticamente).
-          retainedAmount,
-          // Solo en una reserva anterior pagada de más del precio de un lugar (hoy no ocurre).
-          hasSurplus: isOverpaid,
-          surplusAmount: surplusAmount,
-        },
+        financialSummary,
       };
     });
   }

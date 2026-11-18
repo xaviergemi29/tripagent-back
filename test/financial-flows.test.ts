@@ -46,6 +46,8 @@ interface ScenarioOptions {
   unitPrice?: number | null;
   /** Precio ACTUAL del tour (puede haber cambiado después de apartar). */
   tourPrice?: number;
+  /** Anticipo por persona del tour (por defecto $300). */
+  depositPerPerson?: number;
 }
 
 function scenario({
@@ -57,6 +59,7 @@ function scenario({
   tourCancelled = false,
   unitPrice = 1000,
   tourPrice = 1000,
+  depositPerPerson = 300,
 }: ScenarioOptions = {}) {
   const payments = ledger.map((entry) => ({
     id: randomUUID(),
@@ -85,7 +88,7 @@ function scenario({
         id: TOUR,
         agencyId: AGENCY_A,
         price: tourPrice,
-        depositPerPerson: 300,
+        depositPerPerson,
         currency: "MXN",
         cancelledAt: tourCancelled ? "2026-11-14T10:00:00.000Z" : null,
       },
@@ -642,10 +645,12 @@ describe("Flujos financieros y de grupo (de punta a punta)", () => {
       assert.deepEqual(res.json().data.financialSummary, {
         previousTotal: 3000,
         newTotal: 2000,
+        unitPrice: 1000,
+        penaltyAmount: 0,
+        nonRetainedAmount: 1000,
+        pendingBalance: 1100,
+        refundableSurplus: 0,
         amountPaid: 900,
-        retainedAmount: 0, // lo abonado ($900) cabe en el nuevo total: se absorbe en el saldo
-        hasSurplus: false,
-        surplusAmount: 0,
       });
     });
 
@@ -664,10 +669,11 @@ describe("Flujos financieros y de grupo (de punta a punta)", () => {
       assert.equal(fake.token(BOOKING).numberPassengers, 2);
     });
 
-    it("penalización mayor al precio de un lugar → 400 sin escribir", async () => {
+    it("retención mayor al precio del lugar → 400 sin escribir", async () => {
       const fake = scenario();
       const res = await dropPassenger(COMPANION_1, 1001);
       assert.equal(res.statusCode, 400);
+      assert.match(res.json().error, /no puede superar el precio del lugar/);
       assert.equal(fake.writes.length, 0);
       assert.equal(fake.passenger(BOOKING, COMPANION_1).status, "ACTIVE");
     });
@@ -722,48 +728,153 @@ describe("Flujos financieros y de grupo (de punta a punta)", () => {
       assert.equal(fake.passenger(BOOKING, TITULAR).status, "ACTIVE");
     });
 
-    it("lo abonado supera el nuevo total: el excedente se retiene, saldo $0 y sin saldo a favor", async () => {
-      // Decisión del usuario (2026-11-17): $2,500 abonados de $3,000 y baja de un lugar de $1,000.
-      const fake = scenario({ ledger: [{ amount: 2500 }] });
-      const res = await dropPassenger(COMPANION_1);
+    // ── Escenarios de la retención para la agencia (FLUJO-RES-004 / PQ-C5, 2026-11-17) ──────────
+    // nuevo total = total − precio del lugar + retención; lo abonado no cambia; sin retención
+    // automática: si lo abonado supera el nuevo total queda un saldo a devolver al titular.
+
+    it("Escenario 1: retención parcial con saldo pendiente ($3,000, abonado $1,500, retención $250)", async () => {
+      const fake = scenario({
+        ledger: [{ amount: 1500 }],
+        depositPerPerson: 500,
+        status: "CONFIRMED",
+      });
+      const res = await dropPassenger(COMPANION_1, 250);
       assert.equal(res.statusCode, 200);
-      assert.equal(fake.booking(BOOKING).totalPrice, 2500); // no $2,000
-      assert.equal(fake.booking(BOOKING).amountPaid, 2500);
-      assert.equal(fake.booking(BOOKING).paymentStatus, "PAID");
       assert.deepEqual(res.json().data.financialSummary, {
         previousTotal: 3000,
-        newTotal: 2500,
-        amountPaid: 2500,
-        retainedAmount: 500,
-        hasSurplus: false,
-        surplusAmount: 0,
+        newTotal: 2250,
+        unitPrice: 1000,
+        penaltyAmount: 250,
+        nonRetainedAmount: 750,
+        pendingBalance: 750,
+        refundableSurplus: 0,
+        amountPaid: 1500,
       });
-      // El lugar sí se libera: el cupo baja aunque el total no baje los $1,000.
+      const booking = fake.booking(BOOKING);
+      assert.equal(booking.totalPrice, 2250);
+      assert.equal(booking.amountPaid, 1500);
+      assert.equal(booking.paymentStatus, "PARTIAL");
+      assert.equal(booking.status, "CONFIRMED"); // anticipo de 2 personas: $1,000 ≤ $1,500
+      assert.equal(fake.passenger(BOOKING, COMPANION_1).seatLabel, null);
       assert.equal(fake.token(BOOKING).numberPassengers, 2);
     });
 
-    it("liquidada ($3,000) y baja de uno: retiene el precio completo del lugar ($1,000)", async () => {
-      const fake = scenario({ ledger: [{ amount: 3000 }] });
-      const res = await dropPassenger(COMPANION_1);
-      assert.equal(fake.booking(BOOKING).totalPrice, 3000);
-      assert.equal(res.json().data.financialSummary.retainedAmount, 1000);
-    });
-
-    it("tope: la retención automática nunca supera el precio de un lugar (reserva anterior pagada de más)", async () => {
-      const fake = scenario({ ledger: [{ amount: 3200 }] }); // posible antes de bloquear sobrepagos
-      const res = await dropPassenger(COMPANION_1);
+    it("Escenario 2: retención del 100 % del lugar en una reserva liquidada ($6,000)", async () => {
+      const fake = scenario({
+        ledger: [{ amount: 6000 }],
+        totalPrice: 6000,
+        unitPrice: 2000,
+        tourPrice: 2000,
+        depositPerPerson: 1000,
+        status: "CONFIRMED",
+      });
+      const res = await dropPassenger(COMPANION_1, 2000);
+      assert.equal(res.statusCode, 200);
       const summary = res.json().data.financialSummary;
-      assert.equal(summary.retainedAmount, 1000);
-      assert.equal(fake.booking(BOOKING).totalPrice, 3000);
-      assert.equal(summary.surplusAmount, 200);
+      assert.equal(summary.newTotal, 6000);
+      assert.equal(summary.pendingBalance, 0);
+      assert.equal(summary.refundableSurplus, 0);
+      assert.equal(summary.nonRetainedAmount, 0);
+      const booking = fake.booking(BOOKING);
+      assert.equal(booking.totalPrice, 6000);
+      assert.equal(booking.amountPaid, 6000);
+      assert.equal(booking.paymentStatus, "PAID");
+      // Se libera el lugar y el asiento del acompañante; la agencia conserva los $6,000.
+      assert.equal(fake.token(BOOKING).numberPassengers, 2);
+      assert.equal(fake.passenger(BOOKING, COMPANION_1).seatLabel, null);
+      assert.equal(occupiedSeats(fake), 3);
     });
 
-    it("la retención enviada cuenta dentro del tope: $300 enviados + excedente ≤ $1,000", async () => {
-      const fake = scenario({ ledger: [{ amount: 2900 }] });
-      const res = await dropPassenger(COMPANION_1, 300);
-      // Sin excedente: $2,000 + $300 = $2,300 < $2,900 → se retienen $900 en total.
-      assert.equal(res.json().data.financialSummary.retainedAmount, 900);
-      assert.equal(fake.booking(BOOKING).totalPrice, 2900);
+    it("Escenario 3: sin retención; el anticipo de 2 personas ya se cubre → CONFIRMED", async () => {
+      const fake = scenario({
+        ledger: [{ amount: 1000 }],
+        depositPerPerson: 500,
+        status: "PENDING",
+      });
+      const res = await dropPassenger(COMPANION_1, 0);
+      assert.equal(res.statusCode, 200);
+      const summary = res.json().data.financialSummary;
+      assert.equal(summary.newTotal, 2000);
+      assert.equal(summary.pendingBalance, 1000);
+      assert.equal(summary.refundableSurplus, 0);
+      const booking = fake.booking(BOOKING);
+      assert.equal(booking.totalPrice, 2000);
+      assert.equal(booking.amountPaid, 1000);
+      assert.equal(booking.status, "CONFIRMED"); // antes PENDING: $1,000 < anticipo de $1,500
+    });
+
+    it("Escenario 4: retención parcial en una reserva liquidada → $750 a devolver al titular", async () => {
+      const fake = scenario({ ledger: [{ amount: 3000 }], status: "CONFIRMED" });
+      const res = await dropPassenger(COMPANION_1, 250);
+      assert.equal(res.statusCode, 200);
+      const summary = res.json().data.financialSummary;
+      assert.equal(summary.newTotal, 2250);
+      assert.equal(summary.pendingBalance, 0);
+      assert.equal(summary.refundableSurplus, 750);
+      const booking = fake.booking(BOOKING);
+      assert.equal(booking.totalPrice, 2250); // ya no se retiene el excedente en automático
+      assert.equal(booking.amountPaid, 3000);
+      assert.equal(booking.paymentStatus, "PAID");
+    });
+
+    it("Escenario 4 → devolución: el reembolso salda el saldo a favor y deja la reserva liquidada", async () => {
+      const fake = scenario({ ledger: [{ amount: 3000 }], status: "CONFIRMED" });
+      await dropPassenger(COMPANION_1, 250);
+
+      const tooMuch = await pay(800, { type: "REFUND", referenceInfo: "SPEI 9911" });
+      assert.equal(tooMuch.statusCode, 400);
+
+      const res = await pay(750, { type: "REFUND", referenceInfo: "SPEI 9911" });
+      assert.equal(res.statusCode, 201, res.body);
+      const booking = fake.booking(BOOKING);
+      assert.equal(booking.amountPaid, 2250);
+      assert.equal(booking.totalPrice, 2250);
+      assert.equal(booking.paymentStatus, "PAID");
+      assert.equal(fake.paymentsOf(BOOKING).at(-1)!.amount, -750);
+
+      // Sin saldo a favor, otro reembolso vuelve a la regla general → 409.
+      const again = await pay(10, { type: "REFUND", referenceInfo: "SPEI 9912" });
+      assert.equal(again.statusCode, 409);
+    });
+
+    it("tope exacto: se puede devolver justo el saldo a favor ($750); un centavo más → 400", async () => {
+      const fake = scenario({ ledger: [{ amount: 3000 }], status: "CONFIRMED" });
+      await dropPassenger(COMPANION_1, 250);
+      const writesBefore = fake.writes.length;
+
+      const overByCent = await pay(750.01, { type: "REFUND", referenceInfo: "SPEI 1" });
+      assert.equal(overByCent.statusCode, 400);
+      assert.equal(fake.writes.length, writesBefore);
+
+      const exact = await pay(750, { type: "REFUND", referenceInfo: "SPEI 1" });
+      assert.equal(exact.statusCode, 201, exact.body);
+      assert.equal(fake.booking(BOOKING).amountPaid, 2250);
+    });
+
+    it("devolución parcial del saldo a favor: queda el resto por devolver", async () => {
+      const fake = scenario({ ledger: [{ amount: 3000 }], status: "CONFIRMED" });
+      await dropPassenger(COMPANION_1, 250);
+      assert.equal((await pay(500, { type: "REFUND", referenceInfo: "SPEI 1" })).statusCode, 201);
+      assert.equal(fake.booking(BOOKING).amountPaid, 2500); // quedan $250 a devolver
+      assert.equal(
+        (await pay(250.01, { type: "REFUND", referenceInfo: "SPEI 2" })).statusCode,
+        400,
+      );
+      assert.equal((await pay(250, { type: "REFUND", referenceInfo: "SPEI 2" })).statusCode, 201);
+    });
+
+    it("reserva cancelada por el cliente: aunque lo abonado supere el total, no hay reembolso (409)", async () => {
+      const fake = scenario({ ledger: [{ amount: 1500 }], status: "CANCELLED", totalPrice: 1000 });
+      const res = await pay(100, { type: "REFUND", referenceInfo: "SPEI 1" });
+      assert.equal(res.statusCode, 409);
+      assert.equal(fake.writes.length, 0);
+    });
+
+    it("reserva sin saldo a devolver: un reembolso en un tour activo → 409 sin escribir", async () => {
+      const fake = scenario({ ledger: [{ amount: 1500 }] });
+      const res = await pay(100, { type: "REFUND", referenceInfo: "SPEI 1" });
+      assert.equal(res.statusCode, 409);
+      assert.equal(fake.writes.length, 0);
     });
 
     it("pasajero inexistente o de otra reserva → 404 sin escribir", async () => {
