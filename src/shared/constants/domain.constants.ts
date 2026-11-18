@@ -36,3 +36,18 @@ export const TOUR_CANCELLATION_REASONS = ["WEATHER", "SECURITY", "LOW_SALES", "O
 
 /** Máximo de la nota interna de cancelación. */
 export const TOUR_CANCELLATION_NOTE_MAX_LENGTH = 200;
+
+// Código de un 409 que el cliente usa para decidir qué mostrar, nunca el texto del mensaje
+// (folleto "Iniciar Reserva", 2026-11-18). Espejo en el front.
+export const CONFLICT_CODES = ["CAPACITY_EXCEEDED", "BOOKINGS_CLOSED", "ALREADY_BOOKED"] as const;
+export type ConflictCode = (typeof CONFLICT_CODES)[number];
+
+/** Acceso por nombre: `new ConflictError(mensaje, CONFLICT_CODE.ALREADY_BOOKED)`. */
+export const CONFLICT_CODE = {
+  /** No alcanzan los lugares vendibles; la respuesta incluye `availableSeats`. */
+  CAPACITY_EXCEEDED: "CAPACITY_EXCEEDED",
+  /** El tour ya no recibe reservas en línea (ya salió o la agencia está en solo lectura). */
+  BOOKINGS_CLOSED: "BOOKINGS_CLOSED",
+  /** El WhatsApp ya tiene una reserva activa en el tour. */
+  ALREADY_BOOKED: "ALREADY_BOOKED",
+} as const satisfies Record<string, ConflictCode>;

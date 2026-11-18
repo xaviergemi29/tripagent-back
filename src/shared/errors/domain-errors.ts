@@ -4,6 +4,8 @@
  * del mensaje para decidir el código.
  */
 
+import { CONFLICT_CODE, type ConflictCode } from "../constants/domain.constants.js";
+
 /** El recurso no existe o no pertenece a la agencia de la sesión → 404. */
 export class NotFoundError extends Error {
   constructor(message: string) {
@@ -20,9 +22,15 @@ export class BusinessRuleError extends Error {
   }
 }
 
-/** La operación choca con el estado actual del recurso → 409. */
+/**
+ * La operación choca con el estado actual del recurso → 409. `code` (opcional) viaja en la respuesta
+ * para que el cliente decida qué mostrar sin comparar el texto.
+ */
 export class ConflictError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public readonly code?: ConflictCode,
+  ) {
     super(message);
     this.name = "ConflictError";
   }
@@ -31,7 +39,10 @@ export class ConflictError extends Error {
 /** No hay lugares vendibles suficientes en el tour → 409. */
 export class CapacityExceededError extends ConflictError {
   constructor(public readonly availableSeats: number) {
-    super(`Capacidad excedida. Solo quedan ${Math.max(0, availableSeats)} lugares disponibles.`);
+    super(
+      `Capacidad excedida. Solo quedan ${Math.max(0, availableSeats)} lugares disponibles.`,
+      CONFLICT_CODE.CAPACITY_EXCEEDED,
+    );
     this.name = "CapacityExceededError";
   }
 }

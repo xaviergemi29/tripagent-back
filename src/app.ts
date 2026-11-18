@@ -39,7 +39,12 @@ import {
   SUBSCRIPTION_READ_ONLY_CODE,
   SUBSCRIPTION_READ_ONLY_MESSAGE,
 } from "./shared/utils/subscription.util.js";
-import { BusinessRuleError, ConflictError, NotFoundError } from "./shared/errors/domain-errors.js";
+import {
+  BusinessRuleError,
+  CapacityExceededError,
+  ConflictError,
+  NotFoundError,
+} from "./shared/errors/domain-errors.js";
 import { GENERIC_ERROR_MESSAGE } from "./shared/security/error-message.util.js";
 
 // buildApp() vive separado del arranque (server.ts) para poder probar las rutas con app.inject()
@@ -170,7 +175,15 @@ export const buildApp = async (options: BuildAppOptions = {}) => {
   const defaultErrorHandler = app.errorHandler;
   app.setErrorHandler(function (error, request, reply) {
     if (error instanceof NotFoundError) return reply.status(404).send({ error: error.message });
-    if (error instanceof ConflictError) return reply.status(409).send({ error: error.message });
+    if (error instanceof ConflictError) {
+      return reply.status(409).send({
+        error: error.message,
+        code: error.code,
+        // Lugares que sí quedan, para que el folleto ajuste la solicitud sin leer el mensaje.
+        availableSeats:
+          error instanceof CapacityExceededError ? Math.max(0, error.availableSeats) : undefined,
+      });
+    }
     if (error instanceof BusinessRuleError) {
       return reply.status(400).send({ error: error.message });
     }

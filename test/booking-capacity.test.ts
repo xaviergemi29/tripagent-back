@@ -134,6 +134,9 @@ describe("Cupo y sobreventa", () => {
 
       assert.equal(res.statusCode, 409);
       assert.equal(res.json().error, "Capacidad excedida. Solo quedan 2 lugares disponibles.");
+      // El cliente decide con el código y los lugares restantes, no con el texto.
+      assert.equal(res.json().code, "CAPACITY_EXCEEDED");
+      assert.equal(res.json().availableSeats, 2);
       assert.equal(inserts.length, 0);
     });
 
@@ -163,6 +166,7 @@ describe("Cupo y sobreventa", () => {
 
       assert.equal(res.statusCode, 409);
       assert.match(res.json().error, /Ya existe una reserva activa/);
+      assert.equal(res.json().code, "ALREADY_BOOKED");
     });
 
     it("rechaza lugares fraccionarios (400)", async () => {
@@ -244,6 +248,7 @@ describe("Cupo y sobreventa", () => {
 
       assert.equal(res.statusCode, 409);
       assert.match(res.json().error, /ya no admite reservas/);
+      assert.equal(res.json().code, "BOOKINGS_CLOSED");
       assert.equal(inserts.length, 0);
     });
 

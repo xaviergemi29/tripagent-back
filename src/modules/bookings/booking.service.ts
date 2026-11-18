@@ -38,7 +38,11 @@ import {
 } from "../../shared/utils/traveler-merge.util.js";
 import { isSamePhone, phoneLookupCandidates } from "../../shared/utils/phone.util.js";
 import type { CountryCode } from "libphonenumber-js";
-import { PASSENGER_ROLE, TOUR_TEMPORAL_STATUS } from "../../shared/constants/domain.constants.js";
+import {
+  CONFLICT_CODE,
+  PASSENGER_ROLE,
+  TOUR_TEMPORAL_STATUS,
+} from "../../shared/constants/domain.constants.js";
 
 /**
  * Referencia legible del grupo (`GRP-XXXXXXXX`). Usa el generador criptográfico (antes
@@ -372,11 +376,14 @@ export class BookingService {
         getTourTemporalStatus(tour.departureDateTime, tour.cancelledAt, tour.returnDate) !==
         TOUR_TEMPORAL_STATUS.UPCOMING
       ) {
-        throw new ConflictError("Este tour ya no admite reservas en línea.");
+        throw new ConflictError(
+          "Este tour ya no admite reservas en línea.",
+          CONFLICT_CODE.BOOKINGS_CLOSED,
+        );
       }
       // Agencia en Modo Solo Lectura (2026-11-18): el folleto sigue visible, sin pre-reservas.
       if (isAgencyReadOnly(tour.agency)) {
-        throw new ConflictError(PUBLIC_BOOKINGS_PAUSED_MESSAGE);
+        throw new ConflictError(PUBLIC_BOOKINGS_PAUSED_MESSAGE, CONFLICT_CODE.BOOKINGS_CLOSED);
       }
 
       await BookingService.reserveSeats(tx, tour, {
@@ -455,7 +462,10 @@ export class BookingService {
     });
 
     if (existingPassengerInTour) {
-      throw new ConflictError("Ya existe una reserva activa con este WhatsApp para este tour.");
+      throw new ConflictError(
+        "Ya existe una reserva activa con este WhatsApp para este tour.",
+        CONFLICT_CODE.ALREADY_BOOKED,
+      );
     }
 
     // 4. Reserva (precio congelado) + titular en el manifiesto + Magic Link.

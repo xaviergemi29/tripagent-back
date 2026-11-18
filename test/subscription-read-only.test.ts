@@ -261,6 +261,7 @@ describe("Rutas públicas de una agencia en solo lectura", () => {
 
     assert.equal(res.statusCode, 409);
     assert.equal(res.json().error, PUBLIC_BOOKINGS_PAUSED_MESSAGE);
+    assert.equal(res.json().code, "BOOKINGS_CLOSED");
     assert.equal(writes, 0);
   });
 });
