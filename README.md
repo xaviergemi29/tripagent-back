@@ -20,17 +20,17 @@ Sin `JWT_SECRET`/`COOKIE_SECRET` válidos la API no arranca, y en producción ta
 
 ## Comandos
 
-| Comando                                                      | Qué hace                                                                                           |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `npm test`                                                   | Pruebas (`node:test`); nunca tocan la base: `test/setup.ts` fuerza una `DATABASE_URL` inalcanzable |
-| `npm run build`                                              | `tsc` → `dist/` (type checking)                                                                    |
-| `npx eslint .`                                               | Lint                                                                                               |
-| `npm run format:check`                                       | Prettier (excluye lo generado, ver `.prettierignore`)                                              |
-| `npm run db:generate`                                        | Genera la migración SQL a partir de `src/db/schema.ts`                                             |
-| `npx drizzle-kit check`                                      | Valida la consistencia de las migraciones (sin conexión)                                           |
-| `npm run db:migrate`                                         | Aplica migraciones en Neon (**escribe en la base: solo con autorización**)                         |
-| `npm run tenant:create -- --name= --email= --adminPassword=` | Alta de agencia + usuario ADMIN (escribe en Neon)                                                  |
-| `npm run vehicle-templates:sync`                             | Sincroniza el catálogo global de vehículos (escribe en Neon)                                       |
+| Comando                                                      | Qué hace                                                                                                               |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `npm test`                                                   | Pruebas (`node:test`); nunca tocan la base: `test/setup.ts` fuerza una `DATABASE_URL` inalcanzable                     |
+| `npm run build`                                              | `tsc` → `dist/` (type checking)                                                                                        |
+| `npx eslint .`                                               | Lint                                                                                                                   |
+| `npm run format:check`                                       | Prettier (excluye lo generado, ver `.prettierignore`)                                                                  |
+| `npm run db:generate`                                        | Genera la migración SQL a partir de `src/db/schema.ts`                                                                 |
+| `npx drizzle-kit check`                                      | Valida la consistencia de las migraciones (sin conexión)                                                               |
+| `npm run db:migrate`                                         | Aplica migraciones en Neon (**escribe en la base: solo con autorización**)                                             |
+| `npm run tenant:create -- --name= --email= --adminPassword=` | Alta de agencia + usuario ADMIN por CLI (escribe en Neon; también existe el alta web `POST /api/auth/register-agency`) |
+| `npm run vehicle-templates:sync`                             | Sincroniza el catálogo global de vehículos (escribe en Neon)                                                           |
 
 ## Arquitectura en una línea
 
