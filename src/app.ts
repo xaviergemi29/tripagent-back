@@ -26,6 +26,7 @@ import { vehicleRoutes } from "./modules/vehicles/vehicles.routes.js";
 import { vehicleTemplateRoutes } from "./modules/vehicle-templates/vehicle-templates.routes.js";
 import { tourSeatsRoutes } from "./modules/tour-seats/tour-seats.routes.js";
 import { tourManifestRoutes } from "./modules/tour-manifest/tour-manifest.routes.js";
+import { notificationRoutes } from "./modules/notifications/notifications.routes.js";
 import rateLimit from "@fastify/rate-limit";
 import {
   resolveCorsOrigin,
@@ -67,9 +68,14 @@ const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /**
  * Mutaciones autenticadas permitidas en Modo Solo Lectura: no son operaciones de negocio. Cerrar
- * sesión no pasa por `authenticate`; cambiar la contraseña es seguridad de la cuenta.
+ * sesión no pasa por `authenticate`; cambiar la contraseña es seguridad de la cuenta. Marcar avisos
+ * como leídos (2026-11-22) solo ordena la bandeja: el registro del Magic Link sigue generándolos.
  */
-const READ_ONLY_ALLOWED_ROUTES = new Set(["/api/auth/change-password"]);
+const READ_ONLY_ALLOWED_ROUTES = new Set([
+  "/api/auth/change-password",
+  "/api/notifications/read-all",
+  "/api/notifications/:id/read",
+]);
 
 export const buildApp = async (options: BuildAppOptions = {}) => {
   const isSessionActive = options.isSessionActive ?? AuthService.isSessionActive;
@@ -227,6 +233,7 @@ export const buildApp = async (options: BuildAppOptions = {}) => {
   await app.register(vehicleTemplateRoutes, { prefix: "/api/vehicle-templates" });
   await app.register(tourSeatsRoutes, { prefix: "/api/seats" });
   await app.register(tourManifestRoutes, { prefix: "/api/manifest" });
+  await app.register(notificationRoutes, { prefix: "/api/notifications" });
 
   return app;
 };

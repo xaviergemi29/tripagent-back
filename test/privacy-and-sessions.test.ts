@@ -72,8 +72,9 @@ describe("A1 y A2. Registro público del Magic Link", () => {
   };
 
   /** Transacción falsa del registro: el titular ya existe en la agencia con nombre y correo. */
-  function fakeRegistration() {
+  function fakeRegistration(opts: { bookingStatus?: string } = {}) {
     const updates: { table: string; values: Record<string, unknown> }[] = [];
+    const inserts: { table: string; values: Record<string, unknown> }[] = [];
     const tx = {
       query: {
         magicTokens: {
@@ -90,6 +91,7 @@ describe("A1 y A2. Registro público del Magic Link", () => {
         tours: {
           findFirst: async () => ({
             id: "tour-1",
+            title: "Sierra Gorda",
             price: 1000,
             depositPerPerson: 0,
             agency: { name: "Viajes Xalapa" },
@@ -98,7 +100,7 @@ describe("A1 y A2. Registro público del Magic Link", () => {
         bookings: {
           findFirst: async () => ({
             id: "booking-1",
-            status: "AWAITING_REGISTRATION",
+            status: opts.bookingStatus ?? "AWAITING_REGISTRATION",
             travelerId: "titular-1",
             totalPrice: 1000,
             amountPaid: 0,
@@ -125,11 +127,16 @@ describe("A1 y A2. Registro público del Magic Link", () => {
           return chain([]);
         },
       }),
-      insert: () => chain([{ id: "nuevo" }]),
+      insert: (table: Table) => ({
+        values: (values: Record<string, unknown>) => {
+          inserts.push({ table: getTableName(table), values });
+          return chain([{ id: "nuevo" }]);
+        },
+      }),
       select: () => chain([]),
     };
     mock.method(db, "transaction", (async (fn: (t: unknown) => unknown) => fn(tx)) as never);
-    return { updates };
+    return { updates, inserts };
   }
 
   const register = (body: Record<string, unknown>) =>
@@ -159,6 +166,31 @@ describe("A1 y A2. Registro público del Magic Link", () => {
       (u) => u.table === "bookings" && "privacyNoticeAcceptedAt" in u.values,
     );
     assert.ok(bookingUpdate, "la reserva guarda privacyNoticeAcceptedAt");
+  });
+
+  it("crea el aviso BOOKING_COMPLETED para la agencia del token, en la misma transacción", async () => {
+    const { inserts } = fakeRegistration();
+
+    const res = await register({ ...payload, privacyNoticeAccepted: true });
+
+    assert.equal(res.statusCode, 201);
+    const notification = inserts.find((i) => i.table === "notifications")!.values;
+    assert.equal(notification.type, "BOOKING_COMPLETED");
+    assert.equal(notification.bookingId, "booking-1");
+    assert.equal(notification.tourId, "tour-1");
+    assert.equal(notification.tourTitle, "Sierra Gorda");
+    // El nombre que capturó el titular en el formulario (foto del momento).
+    assert.equal(notification.travelerName, "Nombre Distinto");
+    assert.equal(notification.seatsCount, 1);
+  });
+
+  it("si el registro se rechaza (reserva ya registrada → 409) no se crea el aviso", async () => {
+    const { inserts } = fakeRegistration({ bookingStatus: "PENDING" });
+
+    const res = await register({ ...payload, privacyNoticeAccepted: true });
+
+    assert.equal(res.statusCode, 409);
+    assert.ok(!inserts.some((i) => i.table === "notifications"));
   });
 });
 

@@ -28,6 +28,8 @@ export const RATE_LIMITS = {
     keyGenerator: (request: FastifyRequest) => `user:${request.user?.id ?? request.ip}`,
     hook: "preHandler",
   },
+  /** Alta de agencia desde la web: crea cuentas, así que se limita por IP. */
+  registerAgency: { max: 5, timeWindow: 60 * MINUTE },
   /** Pre-reserva pública del folleto: ocupa cupo, así que se limita por IP. */
   preBooking: { max: 10, timeWindow: 60 * MINUTE },
   /** Registro del grupo desde el Magic Link. */

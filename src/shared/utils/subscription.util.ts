@@ -8,7 +8,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Plan único del MVP: precio mensual (IVA incluido) y duración de la prueba gratuita. */
 export const SUBSCRIPTION_PLAN = {
-  priceMxn: 499,
+  priceMxn: 999,
   trialDaysTotal: 30,
 } as const;
 

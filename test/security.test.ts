@@ -1,6 +1,6 @@
 import { after, afterEach, before, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
-import { getTableName, type Table } from "drizzle-orm";
+import { getTableName, type SQL, type Table } from "drizzle-orm";
 import { DrizzleQueryError } from "drizzle-orm/errors";
 import bcrypt from "bcryptjs";
 import { db } from "../src/db/index.js";
@@ -11,7 +11,15 @@ import {
 } from "../src/shared/security/security.config.js";
 import { GENERIC_ERROR_MESSAGE } from "../src/shared/security/error-message.util.js";
 import { TourSeatsService } from "../src/modules/tour-seats/tour-seats.service.js";
-import { AGENCY_A, USER_A, chain, createTestApp, sessionCookie, type TestApp } from "./helpers.js";
+import {
+  AGENCY_A,
+  USER_A,
+  chain,
+  createTestApp,
+  rowMatches,
+  sessionCookie,
+  type TestApp,
+} from "./helpers.js";
 
 // Auditoría de seguridad (2026-11-13): secretos obligatorios, CORS con lista de orígenes,
 // encabezados de seguridad, límite de intentos, login sin enumeración, errores sin SQL y
@@ -134,6 +142,25 @@ describe("API: CORS, encabezados, login y límite de intentos", () => {
     });
     assert.equal(wrong.statusCode, 401);
     assert.deepEqual(wrong.json(), unknown.json());
+  });
+
+  it("login: el correo con espacios o mayúsculas se recorta y pasa a minúsculas antes de validar", async () => {
+    let where: SQL | undefined;
+    mock.method(bcrypt, "compare", async () => false);
+    mock.method(db.query.agencyUsers, "findFirst", (async (args: { where?: SQL }) => {
+      where = args.where;
+      return null;
+    }) as never);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email: "  Ana.Mayus@Agencia.MX ", password: "secreta123" },
+    });
+
+    // Antes: 400 "Correo electrónico inválido" (z.email() validaba antes del trim).
+    assert.equal(res.statusCode, 401);
+    assert.ok(rowMatches(where, { email: "ana.mayus@agencia.mx", isActive: true }));
   });
 
   it("login: un fallo de la base es 500 genérico (sin SQL) y no un 401 con el detalle", async () => {

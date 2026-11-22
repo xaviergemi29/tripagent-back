@@ -534,6 +534,47 @@ export const tourBlockedSeats = pgTable(
   (table) => [uniqueIndex("idx_unique_blocked_seat").on(table.tourId, table.seatLabel)],
 );
 
+// ============================================================================
+// NOTIFICATIONS (avisos in-app de acciones del viajero; 2026-11-22)
+// ============================================================================
+/**
+ * Solo las generan acciones públicas del viajero (regla anti-ruido): pre-reserva del folleto
+ * (`PRE_BOOKING`) y registro del grupo en el Magic Link (`BOOKING_COMPLETED`). Las acciones del
+ * operador no generan avisos. `isRead` es de la agencia, no de cada usuario: si un operador la
+ * atiende, deja de estar pendiente para todos (así dos operadores no contactan al mismo cliente).
+ * `travelerName` y `tourTitle` son una foto del momento del evento.
+ */
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agencyId: uuid("agency_id")
+      .references(() => agencies.id, { onDelete: "cascade" })
+      .notNull(),
+    tourId: uuid("tour_id")
+      .references(() => tours.id, { onDelete: "cascade" })
+      .notNull(),
+    bookingId: uuid("booking_id")
+      .references(() => bookings.id, { onDelete: "cascade" })
+      .notNull(),
+    // NOTIFICATION_TYPES (shared/constants/domain.constants.ts): PRE_BOOKING | BOOKING_COMPLETED.
+    type: varchar("type", { length: 30 }).notNull(),
+    travelerName: varchar("traveler_name", { length: 120 }).notNull(),
+    tourTitle: varchar("tour_title", { length: 160 }).notNull(),
+    seatsCount: integer("seats_count").notNull(),
+    isRead: boolean("is_read").default(false).notNull(),
+    createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    // Últimas 20 de la agencia (ORDER BY created_at DESC).
+    index("idx_notifications_agency_created").on(table.agencyId, table.createdAt.desc()),
+    // Conteo de no leídas y "marcar todas como leídas".
+    index("idx_notifications_agency_unread").on(table.agencyId, table.isRead),
+  ],
+);
+
 export const paymentsRelations = relations(payments, ({ one }) => ({
   booking: one(bookings, {
     fields: [payments.bookingId],

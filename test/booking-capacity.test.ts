@@ -21,6 +21,7 @@ const BOOKING_ID = "e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1";
 const baseTour = {
   id: TOUR_ID,
   agencyId: AGENCY_A,
+  title: "Zacatlán de las manzanas",
   price: 1000,
   maxCapacity: 10,
   staffCapacity: 2, // 8 vendibles
@@ -157,6 +158,8 @@ describe("Cupo y sobreventa", () => {
       // Auditoría: el Magic Link guarda qué operador hizo el apartado.
       const token = inserts.find((i) => i.table === "magic_tokens")!.values;
       assert.equal(token.createdByUserId, USER_A);
+      // Regla anti-ruido (2026-11-22): una acción del operador no genera notificación.
+      assert.ok(!inserts.some((i) => i.table === "notifications"));
     });
 
     it("el viajero ya inscrito en el tour → 409", async () => {
@@ -211,6 +214,18 @@ describe("Cupo y sobreventa", () => {
       const token = inserts.find((i) => i.table === "magic_tokens")!.values;
       assert.equal(token.numberPassengers, 2);
       assert.equal(token.createdByUserId, null); // sin operador: lo pidió el cliente
+
+      // Aviso in-app para la agencia del tour, con la reserva recién creada (2026-11-22).
+      const notification = inserts.find((i) => i.table === "notifications")!.values;
+      assert.deepEqual(notification, {
+        agencyId: AGENCY_A,
+        tourId: TOUR_ID,
+        bookingId: "bookings-new",
+        type: "PRE_BOOKING",
+        travelerName: "Mariana Ruiz",
+        tourTitle: "Zacatlán de las manzanas",
+        seatsCount: 2,
+      });
     });
 
     it("un viajero existente se reutiliza sin modificar sus datos", async () => {

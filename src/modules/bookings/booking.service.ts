@@ -17,6 +17,7 @@ import {
 import nodeCrypto from "node:crypto";
 import { BookingStatusService } from "./booking-status.service.js";
 import { BookingCapacityService } from "./booking-capacity.service.js";
+import { NotificationService } from "../notifications/notifications.service.js";
 import { lockBookingForUpdate } from "./booking-lock.util.js";
 import {
   PUBLIC_BOOKINGS_PAUSED_MESSAGE,
@@ -40,6 +41,7 @@ import { isSamePhone, phoneLookupCandidates } from "../../shared/utils/phone.uti
 import type { CountryCode } from "libphonenumber-js";
 import {
   CONFLICT_CODE,
+  NOTIFICATION_TYPE,
   PASSENGER_ROLE,
   TOUR_TEMPORAL_STATUS,
 } from "../../shared/constants/domain.constants.js";
@@ -291,6 +293,17 @@ export class BookingService {
       // (CONFIRMED si ya cubría el anticipo, p. ej. pagó antes de registrarse).
       await BookingStatusService.syncStatus(tx, existingBooking.id, { formCompleted: true });
 
+      // Aviso in-app para la agencia (2026-11-22), en la misma transacción que el registro.
+      await NotificationService.create(tx, {
+        agencyId,
+        tourId: tour.id,
+        bookingId: existingBooking.id,
+        type: NOTIFICATION_TYPE.BOOKING_COMPLETED,
+        travelerName: payload.mainClient.fullName,
+        tourTitle: tour.title,
+        seatsCount: totalRequestedPassengers,
+      });
+
       const companionNames: string[] =
         payload.companions?.map((c) => c.fullName.trim()).filter(Boolean) || [];
 
@@ -361,6 +374,7 @@ export class BookingService {
         columns: {
           id: true,
           agencyId: true,
+          title: true,
           price: true,
           departureDateTime: true,
           returnDate: true,
@@ -386,13 +400,25 @@ export class BookingService {
         throw new ConflictError(PUBLIC_BOOKINGS_PAUSED_MESSAGE, CONFLICT_CODE.BOOKINGS_CLOSED);
       }
 
-      await BookingService.reserveSeats(tx, tour, {
+      const { bookingId } = await BookingService.reserveSeats(tx, tour, {
         fullName: data.fullName,
         whatsapp: data.whatsapp,
         whatsappCountry: data.whatsappCountry,
         email: null,
         numberPassengers: data.numberPassengers,
         createdByUserId: null,
+      });
+
+      // Aviso in-app para la agencia (2026-11-22), en la misma transacción que la reserva. El
+      // apartado rápido del operador usa `reserveSeats` sin aviso (regla anti-ruido).
+      await NotificationService.create(tx, {
+        agencyId: tour.agencyId,
+        tourId: tour.id,
+        bookingId,
+        type: NOTIFICATION_TYPE.PRE_BOOKING,
+        travelerName: data.fullName,
+        tourTitle: tour.title,
+        seatsCount: data.numberPassengers,
       });
     });
   }

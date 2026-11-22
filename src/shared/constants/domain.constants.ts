@@ -51,3 +51,14 @@ export const CONFLICT_CODE = {
   /** El WhatsApp ya tiene una reserva activa en el tour. */
   ALREADY_BOOKED: "ALREADY_BOOKED",
 } as const satisfies Record<string, ConflictCode>;
+
+// Tipo de notificación in-app (2026-11-22). Solo las generan acciones públicas del viajero: la
+// pre-reserva del folleto y el registro del grupo en el Magic Link. Columna `notifications.type`.
+export const NOTIFICATION_TYPES = ["PRE_BOOKING", "BOOKING_COMPLETED"] as const;
+export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
+
+/** Acceso por nombre: `type: NOTIFICATION_TYPE.PRE_BOOKING`. */
+export const NOTIFICATION_TYPE = {
+  PRE_BOOKING: "PRE_BOOKING",
+  BOOKING_COMPLETED: "BOOKING_COMPLETED",
+} as const satisfies Record<NotificationType, NotificationType>;

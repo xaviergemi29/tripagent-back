@@ -96,7 +96,7 @@ describe("GET /api/agencies/subscription", () => {
       trialDaysConsumed: 24,
       trialExpired: false,
       trialEndsAt: "2026-11-28T23:59:59.000Z",
-      priceMxn: 499,
+      priceMxn: 999,
       metrics: { activeToursCount: 12, registeredTravelersCount: 184 },
       speiDetails: null,
       stripePaymentLink: null,
@@ -141,7 +141,7 @@ describe("GET /api/agencies/subscription", () => {
     assert.equal(result.trialDaysRemaining, 16);
     assert.deepEqual(result.metrics, { activeToursCount: 3, registeredTravelersCount: 40 });
     assert.equal(result.speiDetails?.reference, "BRUJI-7492");
-    assert.equal(result.priceMxn, 499);
+    assert.equal(result.priceMxn, 999);
   });
 
   it("agencia inexistente → 404", async () => {
