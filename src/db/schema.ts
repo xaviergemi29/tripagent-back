@@ -256,6 +256,15 @@ export const tours = pgTable(
       .default([])
       .notNull(),
     brochureUrl: text("brochure_url"),
+    // Enlace de staff (regla 26, 2026-11-22): token del enlace público de solo lectura del croquis y
+    // la lista de pasajeros para el coordinador, sin cuenta. Nulo = enlace desactivado. Regenerarlo
+    // invalida el anterior. La vigencia se calcula (`getStaffShareExpiresAt`), no se guarda.
+    staffShareToken: text("staff_share_token"),
+    // Último operador que creó o regeneró el enlace (auditoría por operador, sección G).
+    staffShareTokenCreatedByUserId: uuid("staff_share_token_created_by_user_id").references(
+      () => agencyUsers.id,
+      { onDelete: "set null" },
+    ),
     createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -269,6 +278,8 @@ export const tours = pgTable(
     index("idx_tours_agency_created")
       .on(table.agencyId, table.createdAt)
       .where(sql`${table.deletedAt} IS NULL`),
+    // Búsqueda del enlace de staff por token (ruta pública) y unicidad del token.
+    uniqueIndex("idx_tours_staff_share_token").on(table.staffShareToken),
   ],
 );
 

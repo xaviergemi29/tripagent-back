@@ -18,6 +18,7 @@ import {
   writeUpload,
 } from "../../shared/storage/uploads.js";
 import { BusinessRuleError } from "../../shared/errors/domain-errors.js";
+import { StaffShareService } from "../staff-share/staff-share.service.js";
 
 const BROCHURE_TOO_LARGE = "El folleto no debe pesar más de 5 MB";
 
@@ -108,6 +109,35 @@ export async function tourRoutes(app: FastifyInstance) {
         request.user.id,
       );
       if (!result) return reply.status(404).send({ error: "Tour no encontrado" });
+      return reply.status(200).send({ data: result });
+    },
+  );
+
+  // Enlace de staff (regla 26, 2026-11-22): crea o regenera el token (el anterior deja de
+  // funcionar). 404 tour ajeno; 409 en Modo Auditoría; 402 en Modo Solo Lectura (authenticate).
+  server.post(
+    "/:tourId/staff-share",
+    { onRequest: [app.authenticate], schema: { params: getTourByIdParamsSchema } },
+    async (request, reply) => {
+      const result = await StaffShareService.createOrRegenerate(
+        request.params.tourId,
+        request.user.agencyId,
+        request.user.id,
+      );
+      return reply.status(200).send({ data: result });
+    },
+  );
+
+  // Desactiva el enlace de staff (token = null). 404 tour ajeno.
+  server.delete(
+    "/:tourId/staff-share",
+    { onRequest: [app.authenticate], schema: { params: getTourByIdParamsSchema } },
+    async (request, reply) => {
+      const result = await StaffShareService.disable(
+        request.params.tourId,
+        request.user.agencyId,
+        request.user.id,
+      );
       return reply.status(200).send({ data: result });
     },
   );

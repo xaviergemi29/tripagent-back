@@ -1,7 +1,7 @@
 import { TOUR_TEMPORAL_STATUS, type TourTemporalStatus } from "../constants/domain.constants.js";
 
 /** Suma días a una fecha `YYYY-MM-DD` (mediodía UTC para no cruzar de día por la zona horaria). */
-const addDays = (date: string, days: number): string => {
+export const addDays = (date: string, days: number): string => {
   const value = new Date(`${date}T12:00:00Z`);
   value.setUTCDate(value.getUTCDate() + days);
   return value.toISOString().split("T")[0] ?? date;

@@ -36,6 +36,8 @@ export const RATE_LIMITS = {
   publicRegister: { max: 20, timeWindow: 60 * MINUTE },
   /** Búsqueda de viajero por teléfono (enumeración de clientes de la agencia). */
   lookupTraveler: { max: 20, timeWindow: 10 * MINUTE },
+  /** Enlace de staff (croquis y pasajeros de solo lectura): cada carga y recarga del coordinador. */
+  staffShare: { max: 60, timeWindow: 10 * MINUTE },
   /** Validación del Magic Link (cada carga de la página) y folleto público. */
   publicRead: { max: 120, timeWindow: MINUTE },
 } as const;

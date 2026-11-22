@@ -17,6 +17,7 @@ import { PASSENGER_ROLE } from "../../shared/constants/domain.constants.js";
 import { findBoardingPoint } from "../../shared/utils/boarding-point.util.js";
 import { summarizeRefunds } from "../../shared/utils/refund.util.js";
 import { NotFoundError } from "../../shared/errors/domain-errors.js";
+import { describeStaffShare } from "../../shared/utils/staff-share.util.js";
 
 export class DashboardService {
   static async getTourDashboard(agencyId: string, tourId: string) {
@@ -344,6 +345,9 @@ export class DashboardService {
             capacity: getVehicleCapacity(tour.vehicle.layoutMap),
           }
         : null,
+
+      // Enlace de staff (regla 26): `{ token, expiresAt, isExpired }` o `null` sin enlace activo.
+      staffShare: describeStaffShare(tour),
 
       travelers: groupedTravelers,
       // Canceladas por el cliente (mismo formato que `travelers`, `bookingStatus: CANCELLED`); vacío
