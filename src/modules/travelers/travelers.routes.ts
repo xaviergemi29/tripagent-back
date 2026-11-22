@@ -65,7 +65,8 @@ export async function travelerRoutes(app: FastifyInstance) {
     },
   );
 
-  // Borrado lógico (conserva el historial).
+  // Borrado lógico + anonimización (derecho ARCO): conserva reservas y pagos sin datos personales.
+  // 409 si tiene un viaje próximo o en curso (manejador global).
   server.delete(
     "/:travelerId",
     { onRequest: [app.authenticate], schema: { params: getTravelerByIdParamsSchema } },

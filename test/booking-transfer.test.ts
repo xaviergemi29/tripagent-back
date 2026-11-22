@@ -43,7 +43,7 @@ const titularSlot = {
   status: "ACTIVE",
   boardingPoint: "Xalapa (06:00)",
   seatLabel: "3A",
-  traveler: { id: TITULAR_ID, whatsappPhone: "2281111111", medicalNotes: "Alergia" },
+  traveler: { id: TITULAR_ID, whatsappPhone: "2281111111" },
 };
 
 const companionSlot = {
@@ -54,7 +54,7 @@ const companionSlot = {
   status: "ACTIVE",
   boardingPoint: "Coatepec (06:30)",
   seatLabel: "3B",
-  traveler: { id: COMPANION_ID, whatsappPhone: null, medicalNotes: "Asma" },
+  traveler: { id: COMPANION_ID, whatsappPhone: null },
 };
 
 interface FakeOptions {
@@ -138,7 +138,7 @@ describe("PATCH /api/bookings/:bookingId/transfer", () => {
     isMinor: false,
   };
 
-  it("titular con WhatsApp nuevo: crea viajero sin notas heredadas, cambia dueño y regenera el token", async () => {
+  it("titular con WhatsApp nuevo: crea viajero sin datos heredados, cambia dueño y regenera el token", async () => {
     const { updates, inserts } = fakeTransaction({ slot: titularSlot });
 
     const res = await transfer(titularPayload);
@@ -149,7 +149,8 @@ describe("PATCH /api/bookings/:bookingId/transfer", () => {
     assert.equal(data.amountPaid, 1500); // el saldo se hereda, no se toca
 
     const traveler = inserts.find((i) => i.table === "travelers")!.values;
-    assert.equal(traveler.medicalNotes, null);
+    // Sin notas médicas desde el 2026-11-22 (dato sensible, LFPDPPP): ni se capturan ni se heredan.
+    assert.ok(!("medicalNotes" in traveler));
     assert.equal(traveler.agencyId, AGENCY_A);
 
     // El viajero original no se modifica.
@@ -176,8 +177,8 @@ describe("PATCH /api/bookings/:bookingId/transfer", () => {
     assert.equal(res.json().data.tokenRegenerated, false);
     assert.ok(!updates.some((u) => u.table === "magic_tokens"));
     assert.ok(!updates.some((u) => u.table === "bookings"));
-    // Sin acordeón, las notas médicas del mismo viajero no se tocan.
-    assert.ok(!("medicalNotes" in updates.find((u) => u.table === "travelers")!.set));
+    // Sin acordeón, el contacto de emergencia del mismo viajero no se toca.
+    assert.ok(!("emergencyContactName" in updates.find((u) => u.table === "travelers")!.set));
   });
 
   it("titular con el mismo número en E.164 (guardado con 10 dígitos): no regenera y confirma la lada", async () => {
@@ -214,7 +215,7 @@ describe("PATCH /api/bookings/:bookingId/transfer", () => {
     const traveler = inserts.find((i) => i.table === "travelers")!.values;
     assert.equal(traveler.whatsappPhone, null);
     assert.equal(traveler.email, null);
-    assert.equal(traveler.medicalNotes, null);
+    assert.ok(!("medicalNotes" in traveler));
     const slotUpdate = updates.find((u) => u.table === "booking_passengers")!.set;
     assert.equal(slotUpdate.passengerType, "CHILD");
     assert.equal(slotUpdate.boardingPoint, "Xalapa (06:00)");

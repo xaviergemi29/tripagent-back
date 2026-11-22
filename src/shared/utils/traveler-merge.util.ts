@@ -2,7 +2,7 @@
  * Registro público del Magic Link (decisión del PM, 2026-11-14): cuando el viajero ya existe en la
  * agencia (mismo WhatsApp), el formulario **solo completa los campos vacíos** y respeta los que ya
  * tienen datos. Así ni un error de captura ni un bromista pueden sobrescribir el nombre, el correo o
- * las notas médicas que ya estaban en el CRM de la agencia.
+ * el contacto de emergencia que ya estaban en el CRM de la agencia.
  */
 
 /** Campos del perfil que el formulario público puede completar. */
@@ -12,7 +12,6 @@ export interface TravelerProfileFields {
   emergencyContactName?: string | null | undefined;
   emergencyContactPhone?: string | null | undefined;
   emergencyContactCountry?: string | null | undefined;
-  medicalNotes?: string | null | undefined;
   birthDate?: string | null | undefined;
 }
 
@@ -21,7 +20,6 @@ const PROFILE_KEYS = [
   "email",
   "emergencyContactName",
   "emergencyContactPhone",
-  "medicalNotes",
   "birthDate",
 ] as const satisfies readonly (keyof TravelerProfileFields)[];
 

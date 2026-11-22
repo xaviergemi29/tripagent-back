@@ -36,6 +36,7 @@ export class TourBrochure {
             name: true,
             phone: true,
             logoPath: true,
+            address: true,
             subscriptionStatus: true,
             trialEndsAt: true,
             createdAt: true,
@@ -66,11 +67,13 @@ export class TourBrochure {
       returnDate: tour.returnDate,
       brochureUrl: tour.brochureUrl,
       boardingPoints: tour.boardingPoints,
-      // Solo datos públicos de la agencia: nombre, teléfono y ruta del logotipo (archivo en /public).
+      // Solo datos públicos de la agencia: nombre, teléfono, ruta del logotipo (archivo en /public) y
+      // domicilio (aviso de privacidad simplificado de la pre-reserva, LFPDPPP arts. 15-16).
       agency: {
         name: tour.agency.name,
         phone: tour.agency.phone,
         logoPath: tour.agency.logoPath ?? null,
+        address: tour.agency.address ?? null,
       },
       availability: {
         sellableCapacity: availability.sellableCapacity,

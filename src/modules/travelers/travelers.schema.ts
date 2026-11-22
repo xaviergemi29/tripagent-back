@@ -28,7 +28,6 @@ export const baseTravelerSchema = z.object({
   emergencyContactName: z.string().trim().min(3, "Nombre de emergencia requerido").max(255),
   emergencyContactPhone: phoneSchema,
   emergencyContactCountry: phoneCountrySchema,
-  medicalNotes: z.string().trim().optional(),
   birthDate: z
     .string()
     .date("Debe ser formato YYYY-MM-DD")

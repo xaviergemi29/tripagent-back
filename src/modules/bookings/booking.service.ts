@@ -230,7 +230,6 @@ export class BookingService {
                 emergencyContactName: comp.emergencyContactName,
                 emergencyContactPhone: comp.emergencyContactPhone,
                 emergencyContactCountry: comp.emergencyContactCountry ?? null,
-                medicalNotes: comp.medicalNotes,
                 birthDate: comp.birthDate,
               })
               .returning({ id: travelers.id });
@@ -906,7 +905,7 @@ export class BookingService {
 
       let targetTravelerId: string;
       if (existingTraveler) {
-        // Datos capturados por el operador; los médicos solo se tocan si llegan en el acordeón.
+        // Datos capturados por el operador; la emergencia solo se toca si llega en el acordeón.
         await tx
           .update(travelers)
           .set({
@@ -916,7 +915,6 @@ export class BookingService {
               whatsappPhone: whatsapp,
               whatsappCountry: data.whatsappCountry,
             }),
-            ...(data.medicalNotes !== undefined && { medicalNotes: data.medicalNotes }),
             ...(data.emergencyContactName !== undefined && {
               emergencyContactName: data.emergencyContactName,
             }),
@@ -929,7 +927,7 @@ export class BookingService {
           .where(eq(travelers.id, existingTraveler.id));
         targetTravelerId = existingTraveler.id;
       } else {
-        // Viajero nuevo: arranca sin notas médicas heredadas (solo las capturadas, si hay).
+        // Viajero nuevo: solo con los datos capturados en la transferencia.
         const [newTraveler] = await tx
           .insert(travelers)
           .values({
@@ -938,7 +936,6 @@ export class BookingService {
             whatsappPhone: whatsapp,
             whatsappCountry: whatsapp ? (data.whatsappCountry ?? null) : null,
             email,
-            medicalNotes: data.medicalNotes ?? null,
             emergencyContactName: data.emergencyContactName ?? "",
             emergencyContactPhone: data.emergencyContactPhone ?? "",
             emergencyContactCountry: data.emergencyContactPhone

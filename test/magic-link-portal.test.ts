@@ -362,6 +362,8 @@ describe("Magic Link (portal del viajero): decisiones del PM", () => {
         name: "Viajes Xalapa",
         logoPath: "/uploads/logos/agency-a-1.png",
         phone: "2281234567",
+        // Domicilio del responsable para el aviso de privacidad simplificado (2026-11-22).
+        address: null,
       });
       mock.restoreAll();
     }

@@ -15,6 +15,7 @@ import { phoneLookupCandidates } from "../../shared/utils/phone.util.js";
 import { ConflictError } from "../../shared/errors/domain-errors.js";
 import { db } from "../../db/index.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
+import { TOUR_TEMPORAL_STATUS } from "../../shared/constants/domain.constants.js";
 import { bookingPassengers, bookings, tours, travelers } from "../../db/schema.js";
 import type { GetTravelersQuery, UpdateTravelerBody } from "./travelers.schema.js";
 
@@ -37,6 +38,9 @@ async function assertPhoneAvailable(e164: string, agencyId: string, exceptId?: s
   });
   if (duplicate) throw new ConflictError(DUPLICATE_PHONE_MESSAGE);
 }
+
+/** Nombre que queda en las reservas y pagos de un viajero eliminado (anonimizado). */
+export const ANONYMIZED_TRAVELER_NAME = "Pasajero Eliminado";
 
 export class TravelerService {
   /**
@@ -192,16 +196,81 @@ export class TravelerService {
     return updatedTraveler;
   }
 
+  /**
+   * Eliminar viajero = borrado lógico + anonimización (derecho de cancelación ARCO, LFPDPPP;
+   * decisión del PM, 2026-11-22). Se borran sus datos personales y se conserva la fila con sus
+   * reservas, pagos y asientos, para que la caja y el historial de la agencia sigan cuadrando.
+   * Irreversible. Con un viaje próximo o en curso responde 409: primero se cancela o transfiere su
+   * lugar (si no, el manifiesto de ese tour quedaría con un "Pasajero Eliminado").
+   * Devuelve `null` si no existe o es de otra agencia (la ruta responde 404).
+   */
   static async softDeleteTraveler(id: string, agencyId: string) {
-    const [travelerDeleted] = await db
-      .update(travelers)
-      .set({ deletedAt: new Date().toISOString() })
-      .where(
-        and(eq(travelers.id, id), eq(travelers.agencyId, agencyId), isNull(travelers.deletedAt)),
-      )
-      .returning();
+    return db.transaction(async (tx) => {
+      const traveler = await tx.query.travelers.findFirst({
+        where: and(
+          eq(travelers.id, id),
+          eq(travelers.agencyId, agencyId),
+          isNull(travelers.deletedAt),
+        ),
+        columns: { id: true },
+      });
+      if (!traveler) return null;
 
-    return travelerDeleted;
+      const activeTrips = await tx
+        .select({
+          departureDateTime: tours.departureDateTime,
+          returnDate: tours.returnDate,
+          cancelledAt: tours.cancelledAt,
+        })
+        .from(bookingPassengers)
+        .innerJoin(bookings, eq(bookingPassengers.bookingId, bookings.id))
+        .innerJoin(tours, eq(bookings.tourId, tours.id))
+        .where(
+          and(
+            eq(bookingPassengers.travelerId, id),
+            eq(bookingPassengers.status, "ACTIVE"),
+            ne(bookings.status, "CANCELLED"),
+            isNull(bookings.deletedAt),
+            isNull(tours.deletedAt),
+          ),
+        );
+      const hasUpcomingTrip = activeTrips.some((trip) => {
+        const status = getTourTemporalStatus(
+          trip.departureDateTime,
+          trip.cancelledAt,
+          trip.returnDate,
+        );
+        return (
+          status === TOUR_TEMPORAL_STATUS.UPCOMING || status === TOUR_TEMPORAL_STATUS.IN_PROGRESS
+        );
+      });
+      if (hasUpcomingTrip) {
+        throw new ConflictError(
+          "Este viajero tiene un viaje próximo o en curso. Cancela o transfiere su lugar antes de eliminarlo.",
+        );
+      }
+
+      const now = new Date().toISOString();
+      const [deleted] = await tx
+        .update(travelers)
+        .set({
+          fullName: ANONYMIZED_TRAVELER_NAME,
+          whatsappPhone: null,
+          whatsappCountry: null,
+          email: null,
+          emergencyContactName: "",
+          emergencyContactPhone: "",
+          emergencyContactCountry: null,
+          birthDate: null,
+          customFields: {},
+          deletedAt: now,
+          updatedAt: now,
+        })
+        .where(and(eq(travelers.id, id), eq(travelers.agencyId, agencyId)))
+        .returning({ id: travelers.id, deletedAt: travelers.deletedAt });
+
+      return deleted ?? null;
+    });
   }
 
   static async getTravelerHistory(travelerId: string, agencyId: string) {

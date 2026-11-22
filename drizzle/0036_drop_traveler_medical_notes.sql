@@ -1,0 +1,1 @@
+ALTER TABLE "travelers" DROP COLUMN "medical_notes";

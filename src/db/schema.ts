@@ -172,7 +172,8 @@ export const travelers = pgTable(
     // "" mientras el viajero no llena su formulario (el dashboard lo usa como "pendiente").
     emergencyContactPhone: varchar("emergency_contact_phone", { length: 20 }).notNull(),
     emergencyContactCountry: varchar("emergency_contact_country", { length: 2 }),
-    medicalNotes: text("medical_notes"),
+    // Sin notas médicas (2026-11-22, PM): el estado de salud es dato sensible (LFPDPPP art. 2-VI)
+    // y exige consentimiento expreso y por escrito (art. 8). La columna se eliminó (0036).
     birthDate: date("birth_date"),
 
     customFields: jsonb("custom_fields").$type<CustomFields>().default({}),

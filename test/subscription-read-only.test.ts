@@ -229,7 +229,7 @@ describe("Rutas públicas de una agencia en solo lectura", () => {
     assert.equal(availability.acceptsOnlineBookings, false);
     assert.equal(availability.isBookable, false);
     assert.equal(availability.hasDeparted, false);
-    assert.deepEqual(Object.keys(agency).sort(), ["logoPath", "name", "phone"]);
+    assert.deepEqual(Object.keys(agency).sort(), ["address", "logoPath", "name", "phone"]);
     assert.doesNotMatch(res.body, /trialing|subscriptionStatus|trialEndsAt/);
   });
 

@@ -171,8 +171,7 @@ export const transferPassengerBodySchema = z
     isMinor: z.boolean().default(false),
     // Solo acompañantes: toma el punto de abordaje del titular en lugar de conservar el del lugar.
     inheritTitularBoardingPoint: z.boolean().default(false),
-    // Acordeón opcional "Datos médicos y de emergencia".
-    medicalNotes: emptyToUndefined,
+    // Acordeón opcional "Contacto de emergencia" (sin notas médicas desde el 2026-11-22).
     emergencyContactName: emptyToUndefined,
     emergencyContactPhone: optionalPhoneSchema,
     emergencyContactCountry: phoneCountrySchema,

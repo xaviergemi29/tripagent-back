@@ -119,10 +119,6 @@ export class MagicTokenService {
               emergencyContactName: traveler.emergencyContactName || "",
               emergencyContactPhone: traveler.emergencyContactPhone || "",
               emergencyContactCountry: traveler.emergencyContactCountry ?? null,
-              // Las notas médicas (dato sensible, LFPDPPP) no viajan en el enlace público, igual que
-              // en lookup-traveler: si el viajero ya las tenía se conservan (solo se completan los
-              // campos vacíos al registrar, `fillEmptyTravelerFields`).
-              medicalNotes: "",
               birthDate: traveler.birthDate || "",
               // Si el pasajero ya tenía un punto de abordaje asignado en la BD
               boardingPoint: titularPassenger?.boardingPoint || "",
@@ -288,6 +284,8 @@ export class MagicTokenService {
           name: agency.name,
           logoPath: agency.logoPath ?? null,
           phone: agency.phone ?? null,
+          // Domicilio del responsable para el aviso de privacidad simplificado (LFPDPPP arts. 15-16).
+          address: agency.address ?? null,
         },
         tourId: tour.id,
         bookingId: booking.id,

@@ -110,7 +110,6 @@ const SENSITIVE_VALUES = [
   agencyRow.bankName,
   agencyRow.bankAccountHolder,
   agencyRow.email,
-  agencyRow.address,
 ];
 
 const brochureUrl = (id: string) => `/api/tour-brochure/public/tours/${id}`;
@@ -147,10 +146,13 @@ describe("GET /api/tour-brochure/public/tours/:id (folleto público)", () => {
     for (const field of FIELDS_USED_BY_BROCHURE) {
       assert.ok(field in body, `falta el campo ${field}`);
     }
+    // El domicilio es público desde el 2026-11-22: lo exige el aviso de privacidad simplificado de
+    // la pre-reserva (LFPDPPP arts. 15-16). Los datos bancarios y el correo siguen privados.
     assert.deepEqual(body.agency, {
       name: agencyRow.name,
       phone: agencyRow.phone,
       logoPath: agencyRow.logoPath,
+      address: agencyRow.address,
     });
   });
 

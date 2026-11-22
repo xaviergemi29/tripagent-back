@@ -41,7 +41,6 @@ export class TourManifestService {
               columns: {
                 id: true,
                 fullName: true,
-                medicalNotes: true,
                 emergencyContactName: true,
                 emergencyContactPhone: true,
               },
@@ -77,7 +76,6 @@ export class TourManifestService {
         isTitular: p.isTitular,
         seatLabel: p.seatLabel,
         boardingPoint: p.boardingPoint,
-        medicalNotes: p.traveler.medicalNotes || "",
         // 🚀 Extraemos contacto de emergencia de la tabla travelers
         emergencyContact:
           p.traveler.emergencyContactName && p.traveler.emergencyContactPhone
