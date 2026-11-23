@@ -62,3 +62,33 @@ export const NOTIFICATION_TYPE = {
   PRE_BOOKING: "PRE_BOOKING",
   BOOKING_COMPLETED: "BOOKING_COMPLETED",
 } as const satisfies Record<NotificationType, NotificationType>;
+
+// Tipo de habitación del hospedaje de un tour (regla 27). Enum de BD `lodging_room_type`. Espejo en
+// el front. La capacidad por cuarto SIEMPRE sale de LODGING_ROOM_CAPACITY (nunca del cliente).
+export const LODGING_ROOM_TYPES = [
+  "MATRIMONIAL",
+  "DOUBLE_INDIVIDUAL",
+  "TRIPLE",
+  "QUADRUPLE",
+  // Al final: así la migración es un `ADD VALUE` simple (sin BEFORE).
+  "SINGLE",
+] as const;
+export type LodgingRoomType = (typeof LODGING_ROOM_TYPES)[number];
+
+/** Personas por habitación según su tipo (única regla). */
+export const LODGING_ROOM_CAPACITY = {
+  MATRIMONIAL: 2,
+  DOUBLE_INDIVIDUAL: 2,
+  TRIPLE: 3,
+  QUADRUPLE: 4,
+  SINGLE: 1,
+} as const satisfies Record<LodgingRoomType, number>;
+
+// Estado de una habitación con el hotel (regla 27). Enum de BD `lodging_room_status`. Espejo en el
+// front. Toda habitación nace CONSULTED; el operador la marca CONFIRMED.
+export const LODGING_ROOM_STATUSES = ["CONSULTED", "CONFIRMED"] as const;
+export type LodgingRoomStatus = (typeof LODGING_ROOM_STATUSES)[number];
+export const LODGING_ROOM_STATUS = {
+  CONSULTED: "CONSULTED",
+  CONFIRMED: "CONFIRMED",
+} as const satisfies Record<LodgingRoomStatus, LodgingRoomStatus>;

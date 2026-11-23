@@ -1,0 +1,139 @@
+import z from "zod";
+import {
+  LODGING_ROOM_STATUSES,
+  LODGING_ROOM_TYPES,
+} from "../../shared/constants/domain.constants.js";
+
+/** Máximo de habitaciones de un mismo tipo por envío (contador del modal). */
+export const LODGING_MAX_ROOMS_PER_TYPE = 50;
+/** Máximo de habitaciones por envío (suma de todos los tipos). */
+export const LODGING_MAX_ROOMS_PER_REQUEST = 200;
+export const LODGING_HOTEL_NAME_MAX_LENGTH = 120;
+/** Largo máximo del número de cuarto que asigna el hotel (columna varchar(10)). */
+export const LODGING_ROOM_NUMBER_MAX_LENGTH = 10;
+/** Camas que se asignan en un solo envío (la habitación más grande es cuádruple). */
+export const LODGING_MAX_ASSIGNMENTS_PER_REQUEST = 4;
+
+export const lodgingTourParamsSchema = z.object({
+  tourId: z.uuid("El ID del tour debe ser un UUID válido"),
+});
+
+const roomBatchSchema = z.object({
+  roomType: z.enum(LODGING_ROOM_TYPES, "Tipo de habitación inválido"),
+  quantity: z
+    .number("La cantidad debe ser un número")
+    .int("La cantidad debe ser un número entero")
+    .min(1, "La cantidad mínima es 1")
+    .max(LODGING_MAX_ROOMS_PER_TYPE, `La cantidad máxima es ${LODGING_MAX_ROOMS_PER_TYPE}`),
+});
+
+/**
+ * Lote de habitaciones de un hotel. La capacidad NO viaja: el servidor la toma del tipo
+ * (LODGING_ROOM_CAPACITY). Claves extra (p. ej. `capacityPerRoom`) se descartan.
+ */
+export const createLodgingRoomsBodySchema = z
+  .object({
+    hotelName: z
+      .string("El nombre del hotel es obligatorio")
+      .trim()
+      .min(1, "El nombre del hotel es obligatorio")
+      .max(
+        LODGING_HOTEL_NAME_MAX_LENGTH,
+        `El nombre del hotel no debe superar ${LODGING_HOTEL_NAME_MAX_LENGTH} caracteres`,
+      ),
+    rooms: z
+      .array(roomBatchSchema, "Indica las habitaciones a crear")
+      .min(1, "Agrega al menos una habitación")
+      .max(LODGING_ROOM_TYPES.length, "Hay más tipos de habitación de los permitidos"),
+  })
+  .superRefine((body, ctx) => {
+    const types = body.rooms.map((room) => room.roomType);
+    if (new Set(types).size !== types.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["rooms"],
+        message: "Cada tipo de habitación solo puede aparecer una vez",
+      });
+    }
+    const total = body.rooms.reduce((sum, room) => sum + room.quantity, 0);
+    if (total > LODGING_MAX_ROOMS_PER_REQUEST) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["rooms"],
+        message: `No se pueden crear más de ${LODGING_MAX_ROOMS_PER_REQUEST} habitaciones a la vez`,
+      });
+    }
+  });
+
+export const lodgingRoomParamsSchema = lodgingTourParamsSchema.extend({
+  roomId: z.uuid("El ID de la habitación debe ser un UUID válido"),
+});
+
+export const lodgingSlotParamsSchema = lodgingRoomParamsSchema.extend({
+  slotIndex: z.coerce
+    .number("La cama debe ser un número")
+    .int("La cama debe ser un número entero")
+    .min(1, "La cama mínima es 1"),
+});
+
+/** Número de cuarto: se recorta; vacío → null (quitar el número). */
+const roomNumberSchema = z
+  .string("El número de cuarto debe ser texto")
+  .trim()
+  .max(
+    LODGING_ROOM_NUMBER_MAX_LENGTH,
+    `El número de cuarto no debe superar ${LODGING_ROOM_NUMBER_MAX_LENGTH} caracteres`,
+  )
+  .nullable()
+  .transform((value) => (value ? value : null));
+
+export const updateLodgingRoomBodySchema = z
+  .object({
+    roomNumber: roomNumberSchema.optional(),
+    status: z.enum(LODGING_ROOM_STATUSES, "Estado de habitación inválido").optional(),
+  })
+  .refine((body) => body.roomNumber !== undefined || body.status !== undefined, {
+    message: "Indica el número de cuarto o el estado de la habitación",
+  });
+
+const assignmentSchema = z.object({
+  slotIndex: z
+    .number("La cama debe ser un número")
+    .int("La cama debe ser un número entero")
+    .min(1, "La cama mínima es 1"),
+  bookingPassengerId: z.uuid("El ID del pasajero debe ser un UUID válido"),
+});
+
+export const assignLodgingSlotsBodySchema = z
+  .object({
+    assignments: z
+      .array(assignmentSchema, "Indica las camas a asignar")
+      .min(1, "Asigna al menos una cama")
+      .max(
+        LODGING_MAX_ASSIGNMENTS_PER_REQUEST,
+        `No se pueden asignar más de ${LODGING_MAX_ASSIGNMENTS_PER_REQUEST} camas a la vez`,
+      ),
+  })
+  .superRefine((body, ctx) => {
+    const slots = body.assignments.map((item) => item.slotIndex);
+    if (new Set(slots).size !== slots.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["assignments"],
+        message: "Cada cama solo puede aparecer una vez",
+      });
+    }
+    const passengers = body.assignments.map((item) => item.bookingPassengerId);
+    if (new Set(passengers).size !== passengers.length) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["assignments"],
+        message: "Cada pasajero solo puede aparecer una vez",
+      });
+    }
+  });
+
+export type LodgingTourParams = z.infer<typeof lodgingTourParamsSchema>;
+export type CreateLodgingRoomsBody = z.infer<typeof createLodgingRoomsBodySchema>;
+export type UpdateLodgingRoomBody = z.infer<typeof updateLodgingRoomBodySchema>;
+export type AssignLodgingSlotsBody = z.infer<typeof assignLodgingSlotsBodySchema>;

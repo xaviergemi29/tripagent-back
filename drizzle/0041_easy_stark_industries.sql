@@ -1,0 +1,1 @@
+ALTER TYPE "public"."lodging_room_type" ADD VALUE 'SINGLE';

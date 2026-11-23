@@ -15,6 +15,7 @@ import {
   date,
 } from "drizzle-orm/pg-core";
 import type { LayoutMap } from "../shared/utils/vehicle-layout.util.js";
+import { LODGING_ROOM_STATUSES, LODGING_ROOM_TYPES } from "../shared/constants/domain.constants.js";
 
 export const CURRENCIES = pgEnum("currency", ["MXN", "USD"]);
 export const DESTINATION_TYPE = pgEnum("destination_type", ["NATIONAL", "INTERNATIONAL"]);
@@ -64,6 +65,11 @@ export const PAYMENT_STATUS = pgEnum("payment_status", [
 export const PASSENGER_TYPE = pgEnum("passenger_type", ["ADULT", "CHILD"]);
 
 export const AGENCY_ROLES = pgEnum("agency_roles", ["ADMIN", "SALES", "GUIDE"]);
+
+// Tipo de habitación del hospedaje (regla 27); capacidad en LODGING_ROOM_CAPACITY.
+export const LODGING_ROOM_TYPE = pgEnum("lodging_room_type", LODGING_ROOM_TYPES);
+// Estado de la habitación con el hotel (regla 27): consultada o confirmada.
+export const LODGING_ROOM_STATUS = pgEnum("lodging_room_status", LODGING_ROOM_STATUSES);
 
 export type CustomFields = Record<string, unknown>;
 
@@ -586,6 +592,112 @@ export const notifications = pgTable(
   ],
 );
 
+// ============================================================================
+// HOSPEDAJE DEL TOUR (hoteles y habitaciones por tipo de cama; regla 27)
+// ============================================================================
+/** Hotel registrado para un tour. El nombre se guarda recortado; mismo nombre = mismo hotel. */
+export const tourHotels = pgTable(
+  "tour_hotels",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agencyId: uuid("agency_id")
+      .references(() => agencies.id, { onDelete: "cascade" })
+      .notNull(),
+    tourId: uuid("tour_id")
+      .references(() => tours.id, { onDelete: "cascade" })
+      .notNull(),
+    name: varchar("name", { length: 120 }).notNull(),
+    createdByUserId: uuid("created_by_user_id").references(() => agencyUsers.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index("idx_tour_hotels_tour").on(table.tourId)],
+);
+
+/**
+ * Habitación de un hotel. `capacity` se copia de LODGING_ROOM_CAPACITY al crearla; `position` es el
+ * orden de alta dentro del hotel (1..n); `roomNumber` lo captura el operador (nulo = sin número).
+ */
+export const tourHotelRooms = pgTable(
+  "tour_hotel_rooms",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agencyId: uuid("agency_id")
+      .references(() => agencies.id, { onDelete: "cascade" })
+      .notNull(),
+    tourId: uuid("tour_id")
+      .references(() => tours.id, { onDelete: "cascade" })
+      .notNull(),
+    hotelId: uuid("hotel_id")
+      .references(() => tourHotels.id, { onDelete: "cascade" })
+      .notNull(),
+    roomNumber: varchar("room_number", { length: 10 }),
+    roomType: LODGING_ROOM_TYPE("room_type").notNull(),
+    capacity: integer("capacity").notNull(),
+    position: integer("position").notNull(),
+    status: LODGING_ROOM_STATUS("status").default("CONSULTED").notNull(),
+    createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    // Número de cuarto único por hotel, solo cuando ya se capturó.
+    uniqueIndex("idx_tour_hotel_rooms_hotel_number")
+      .on(table.hotelId, table.roomNumber)
+      .where(sql`${table.roomNumber} IS NOT NULL`),
+    index("idx_tour_hotel_rooms_hotel_position").on(table.hotelId, table.position),
+    index("idx_tour_hotel_rooms_tour").on(table.tourId),
+  ],
+);
+
+/**
+ * Cama de una habitación ocupada por un pasajero (rooming list). Un pasajero ocupa una sola cama
+ * por hotel. Solo cuenta si el pasajero sigue ACTIVE en una reserva no cancelada ni borrada
+ * (asignación vigente); las demás se ignoran y se reemplazan al asignar.
+ */
+export const tourHotelRoomAssignments = pgTable(
+  "tour_hotel_room_assignments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agencyId: uuid("agency_id")
+      .references(() => agencies.id, { onDelete: "cascade" })
+      .notNull(),
+    tourId: uuid("tour_id")
+      .references(() => tours.id, { onDelete: "cascade" })
+      .notNull(),
+    hotelId: uuid("hotel_id")
+      .references(() => tourHotels.id, { onDelete: "cascade" })
+      .notNull(),
+    roomId: uuid("room_id")
+      .references(() => tourHotelRooms.id, { onDelete: "cascade" })
+      .notNull(),
+    slotIndex: integer("slot_index").notNull(),
+    bookingPassengerId: uuid("booking_passenger_id")
+      .references(() => bookingPassengers.id, { onDelete: "cascade" })
+      .notNull(),
+    assignedByUserId: uuid("assigned_by_user_id").references(() => agencyUsers.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_room_assignments_room_slot").on(table.roomId, table.slotIndex),
+    uniqueIndex("idx_room_assignments_hotel_passenger").on(table.hotelId, table.bookingPassengerId),
+    index("idx_room_assignments_tour").on(table.tourId),
+  ],
+);
+
 export const paymentsRelations = relations(payments, ({ one }) => ({
   booking: one(bookings, {
     fields: [payments.bookingId],
@@ -656,6 +768,7 @@ export const toursRelations = relations(tours, ({ many, one }) => ({
     fields: [tours.updatedByUserId],
     references: [agencyUsers.id],
   }),
+  hotels: many(tourHotels),
 }));
 
 export const bookingPassengersRelations = relations(bookingPassengers, ({ one }) => ({
@@ -724,4 +837,32 @@ export const vehiclesRelations = relations(vehicles, ({ one, many }) => ({
 
 export const vehicleTemplatesRelations = relations(vehicleTemplates, ({ many }) => ({
   vehicles: many(vehicles),
+}));
+
+export const tourHotelsRelations = relations(tourHotels, ({ one, many }) => ({
+  tour: one(tours, { fields: [tourHotels.tourId], references: [tours.id] }),
+  agency: one(agencies, { fields: [tourHotels.agencyId], references: [agencies.id] }),
+  createdByUser: one(agencyUsers, {
+    fields: [tourHotels.createdByUserId],
+    references: [agencyUsers.id],
+  }),
+  rooms: many(tourHotelRooms),
+}));
+
+export const tourHotelRoomsRelations = relations(tourHotelRooms, ({ one, many }) => ({
+  hotel: one(tourHotels, { fields: [tourHotelRooms.hotelId], references: [tourHotels.id] }),
+  tour: one(tours, { fields: [tourHotelRooms.tourId], references: [tours.id] }),
+  agency: one(agencies, { fields: [tourHotelRooms.agencyId], references: [agencies.id] }),
+  assignments: many(tourHotelRoomAssignments),
+}));
+
+export const tourHotelRoomAssignmentsRelations = relations(tourHotelRoomAssignments, ({ one }) => ({
+  room: one(tourHotelRooms, {
+    fields: [tourHotelRoomAssignments.roomId],
+    references: [tourHotelRooms.id],
+  }),
+  bookingPassenger: one(bookingPassengers, {
+    fields: [tourHotelRoomAssignments.bookingPassengerId],
+    references: [bookingPassengers.id],
+  }),
 }));

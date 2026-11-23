@@ -274,6 +274,27 @@
       "when": 1795386273615,
       "tag": "0038_green_miracleman",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1795407990069,
+      "tag": "0039_curly_phalanx",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1795441633028,
+      "tag": "0040_tired_norrin_radd",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1795448647072,
+      "tag": "0041_easy_stark_industries",
+      "breakpoints": true
     }
   ]
 }

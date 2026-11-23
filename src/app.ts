@@ -27,6 +27,7 @@ import { vehicleTemplateRoutes } from "./modules/vehicle-templates/vehicle-templ
 import { tourSeatsRoutes } from "./modules/tour-seats/tour-seats.routes.js";
 import { tourManifestRoutes } from "./modules/tour-manifest/tour-manifest.routes.js";
 import { notificationRoutes } from "./modules/notifications/notifications.routes.js";
+import { lodgingRoutes } from "./modules/lodging/lodging.routes.js";
 import { staffSharePublicRoutes } from "./modules/staff-share/staff-share.routes.js";
 import rateLimit from "@fastify/rate-limit";
 import {
@@ -251,6 +252,7 @@ export const buildApp = async (options: BuildAppOptions = {}) => {
   await app.register(tourSeatsRoutes, { prefix: "/api/seats" });
   await app.register(tourManifestRoutes, { prefix: "/api/manifest" });
   await app.register(notificationRoutes, { prefix: "/api/notifications" });
+  await app.register(lodgingRoutes, { prefix: "/api/lodging" });
   await app.register(staffSharePublicRoutes, { prefix: "/api/public/staff-share" });
 
   return app;
