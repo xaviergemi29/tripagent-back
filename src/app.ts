@@ -35,6 +35,7 @@ import {
   resolveTrustProxy,
 } from "./shared/security/security.config.js";
 import { rateLimitErrorResponse } from "./shared/security/rate-limits.js";
+import { redactSensitiveUrl, resolveInternalProxySecret } from "./shared/security/client-ip.js";
 import { AuthService, INACTIVE_USER_MESSAGE } from "./modules/auth/auth.service.js";
 import { AgencySubscriptionService } from "./modules/agencies/agency-subscription.service.js";
 import {
@@ -86,9 +87,24 @@ export const buildApp = async (options: BuildAppOptions = {}) => {
   // Falla cerrado: sin secretos fuertes (o sin CORS_ORIGINS en producción) la API no arranca.
   const { jwtSecret, cookieSecret } = resolveSecrets();
   const corsOrigin = resolveCorsOrigin();
+  // Opcional; si se define corto, la API no arranca (mismo criterio que JWT_SECRET).
+  resolveInternalProxySecret();
 
   const app = Fastify({
-    logger: true,
+    logger: {
+      // El log nunca guarda tokens (Magic Link, enlace de staff) ni el teléfono de lookup-traveler.
+      serializers: {
+        req: (request) => ({
+          method: request.method,
+          url: redactSensitiveUrl(request.url),
+          host: request.host,
+          remoteAddress: request.ip,
+          ...(request.socket?.remotePort === undefined
+            ? {}
+            : { remotePort: request.socket.remotePort }),
+        }),
+      },
+    },
     trustProxy: resolveTrustProxy(),
   }).withTypeProvider<ZodTypeProvider>();
 

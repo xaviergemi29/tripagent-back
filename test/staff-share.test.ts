@@ -537,8 +537,10 @@ describe("Enlace de staff: ruta pública", () => {
     assert.equal(findFirst.mock.callCount(), 0);
   });
 
-  it("límite de intentos: la ruta declara 60 cada 10 minutos por IP", async () => {
+  it("límite de intentos: la ruta declara 120 cada 10 minutos por IP del visitante", async () => {
     const { RATE_LIMITS } = await import("../src/shared/security/rate-limits.js");
-    assert.deepEqual(RATE_LIMITS.staffShare, { max: 60, timeWindow: 10 * 60 * 1000 });
+    assert.equal(RATE_LIMITS.staffShare.max, 120);
+    assert.equal(RATE_LIMITS.staffShare.timeWindow, 10 * 60 * 1000);
+    assert.equal(typeof RATE_LIMITS.staffShare.keyGenerator, "function");
   });
 });

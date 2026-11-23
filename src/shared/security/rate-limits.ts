@@ -1,4 +1,5 @@
 import type { FastifyRequest } from "fastify";
+import { getClientIp } from "./client-ip.js";
 
 /**
  * Límites de intentos por endpoint (@fastify/rate-limit, registrado con `global: false`: solo
@@ -36,10 +37,24 @@ export const RATE_LIMITS = {
   publicRegister: { max: 20, timeWindow: 60 * MINUTE },
   /** Búsqueda de viajero por teléfono (enumeración de clientes de la agencia). */
   lookupTraveler: { max: 20, timeWindow: 10 * MINUTE },
-  /** Enlace de staff (croquis y pasajeros de solo lectura): cada carga y recarga del coordinador. */
-  staffShare: { max: 60, timeWindow: 10 * MINUTE },
-  /** Validación del Magic Link (cada carga de la página) y folleto público. */
-  publicRead: { max: 120, timeWindow: MINUTE },
+  /**
+   * Enlace de staff (croquis y pasajeros de solo lectura): cada carga y recarga de la página es una
+   * petición (filtrar o buscar no vuelve a pedir). 120 cada 10 min por IP da margen a 2–3 personas
+   * del staff detrás de la misma red (Wi-Fi del autobús, CGNAT del celular). Adivinar un token es
+   * inviable (192 bits): el límite frena la automatización, no la fuerza bruta.
+   * Por IP del visitante: el front lo pide desde su servidor y reenvía la IP (`getClientIp`).
+   */
+  staffShare: {
+    max: 120,
+    timeWindow: 10 * MINUTE,
+    keyGenerator: (request: FastifyRequest) => getClientIp(request),
+  },
+  /** Validación del Magic Link (cada carga de la página) y folleto público; por IP del visitante. */
+  publicRead: {
+    max: 120,
+    timeWindow: MINUTE,
+    keyGenerator: (request: FastifyRequest) => getClientIp(request),
+  },
 } as const;
 
 /** Respuesta 429 con la forma `{ error }` que el front ya sabe mostrar (texto en español). */
