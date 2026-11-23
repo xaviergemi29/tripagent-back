@@ -322,7 +322,6 @@ export class BookingService {
         accountHolder: tour.agency.bankAccountHolder,
         clabeNumber: tour.agency.clabeNumber,
         acceptsCreditCard: tour.acceptsCreditCard,
-        paymentLink: tour.paymentLink,
         message: "Registro completado con éxito.",
       };
     });

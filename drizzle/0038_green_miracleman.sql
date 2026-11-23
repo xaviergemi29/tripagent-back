@@ -1,0 +1,1 @@
+ALTER TABLE "tours" DROP COLUMN "payment_link";

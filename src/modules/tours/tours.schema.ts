@@ -52,10 +52,8 @@ export const baseTourSchema = z.object({
   acceptsBankTransfer: z.boolean(),
   acceptsCreditCard: z.boolean(),
 
-  paymentLink: z.preprocess(
-    (val) => (typeof val === "string" && val.trim() === "" ? null : val),
-    z.url("Debe ser una URL válida").nullable().optional(),
-  ),
+  // Sin `paymentLink` (2026-11-22, petición del usuario): la tarjeta cuenta como método de cobro y
+  // ya no exige enlace. Si un cliente anterior lo envía, Zod lo descarta.
 
   acceptsCash: z.boolean(),
   cashInstructions: emptyToNull,
@@ -88,7 +86,6 @@ interface TourRefinementInput {
   price?: number | undefined;
   acceptsBankTransfer?: boolean | undefined;
   acceptsCreditCard?: boolean | undefined;
-  paymentLink?: string | null | undefined;
   acceptsCash?: boolean | undefined;
   cashInstructions?: string | null | undefined;
 }
@@ -147,14 +144,6 @@ function withTourRefinements<T extends z.ZodTypeAny>(schema: T) {
         code: "custom",
         message: PAYMENT_METHOD_REQUIRED_ERROR,
         path: ["acceptsBankTransfer"],
-      });
-    }
-
-    if (data.acceptsCreditCard && (!data.paymentLink || data.paymentLink === "")) {
-      ctx.addIssue({
-        code: "custom",
-        message: "Debes proporcionar un enlace de pago si aceptas tarjeta",
-        path: ["paymentLink"],
       });
     }
 

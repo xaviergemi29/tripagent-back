@@ -49,6 +49,16 @@ describe("POST /tours: al menos un método de cobro", () => {
     });
     assert.equal(result.success, true);
   });
+
+  it("solo tarjeta, sin enlace de pago → válido y un `paymentLink` anterior se descarta", () => {
+    const result = createTourBodySchema.safeParse({
+      ...tourBody,
+      acceptsCreditCard: true,
+      paymentLink: "https://pago.example.com/abc",
+    });
+    assert.equal(result.success, true);
+    assert.equal(result.data && "paymentLink" in result.data, false);
+  });
 });
 
 describe("PATCH /api/agencies/bank-account (cuenta para transferencias)", () => {

@@ -51,7 +51,6 @@ const tourRow = {
   cancelledAt: null,
   acceptsBankTransfer: true,
   acceptsCreditCard: false,
-  paymentLink: null,
   postPaymentInstructions: "",
   acceptsCash: false,
   cashInstructions: null,

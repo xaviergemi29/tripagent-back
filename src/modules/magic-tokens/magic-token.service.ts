@@ -234,7 +234,6 @@ export class MagicTokenService {
           // Tarjeta para depósito/transferencia (se muestra junto a la CLABE en "Métodos y opciones de pago").
           cardNumber: agency.cardNumber ?? null,
           acceptsCreditCard: tour.acceptsCreditCard,
-          paymentLink: tour.paymentLink,
           acceptsCash: tour.acceptsCash,
           cashInstructions: tour.cashInstructions,
         },

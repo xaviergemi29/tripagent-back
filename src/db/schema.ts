@@ -244,7 +244,6 @@ export const tours = pgTable(
     // Configuración de cobro
     acceptsBankTransfer: boolean("accepts_bank_transfer").default(false).notNull(),
     acceptsCreditCard: boolean("accepts_credit_card").default(false).notNull(),
-    paymentLink: text("payment_link"),
     postPaymentInstructions: text("post_payment_instructions").default("").notNull(),
     // Sin políticas propias: solo existen las de la agencia (regla 17). La columna `policies` se
     // eliminó en la migración 0029 (2026-11-14).
