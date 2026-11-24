@@ -72,7 +72,9 @@ describe("A1 y A2. Registro público del Magic Link", () => {
   };
 
   /** Transacción falsa del registro: el titular ya existe en la agencia con nombre y correo. */
-  function fakeRegistration(opts: { bookingStatus?: string } = {}) {
+  function fakeRegistration(
+    opts: { bookingStatus?: string; titularBirthDate?: string | null } = {},
+  ) {
     const updates: { table: string; values: Record<string, unknown> }[] = [];
     const inserts: { table: string; values: Record<string, unknown> }[] = [];
     const tx = {
@@ -116,7 +118,7 @@ describe("A1 y A2. Registro público del Magic Link", () => {
             emergencyContactName: null,
             emergencyContactPhone: null,
             medicalNotes: null,
-            birthDate: null,
+            birthDate: opts.titularBirthDate ?? null,
           }),
         },
         bookingPassengers: { findMany: async () => [], findFirst: async () => null },
@@ -141,6 +143,19 @@ describe("A1 y A2. Registro público del Magic Link", () => {
 
   const register = (body: Record<string, unknown>) =>
     app.inject({ method: "POST", url: "/api/bookings/public/register", payload: body });
+
+  it("titular ya registrado con fecha guardada de menor de edad → 400 sin escribir", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const { updates, inserts } = fakeRegistration({
+      titularBirthDate: `${Number(today.slice(0, 4)) - 10}-01-01`,
+    });
+    // La fecha enviada (adulto) no manda: se respeta la guardada (regla 3).
+    const res = await register({ ...payload, privacyNoticeAccepted: true });
+    assert.equal(res.statusCode, 400);
+    assert.match(res.json().error, /mayor de edad/);
+    assert.equal(updates.length, 0);
+    assert.equal(inserts.length, 0);
+  });
 
   it("sin aceptar el aviso de privacidad → 400 sin escribir", async () => {
     const { updates } = fakeRegistration();

@@ -18,6 +18,7 @@ import {
 import { assertTourNotInAuditMode } from "../../shared/utils/tour-audit-mode.util.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
 import { TOUR_TEMPORAL_STATUS } from "../../shared/constants/domain.constants.js";
+import { isMinorPassenger } from "../../shared/utils/mexico-date.util.js";
 
 type Executor = Pick<typeof db, "query" | "select">;
 
@@ -56,6 +57,8 @@ export interface BoardingRow {
   rooms: BoardingRoom[];
   boardedAt: string | null;
   hasSeatRight: boolean;
+  /** Niño o menor de 18 años (aviso del Art. 58, fr. X Ter, LGT); la fecha no sale de la API. */
+  isMinor: boolean;
 }
 
 /** Orden natural de etiquetas de asiento ("2" antes que "10"; "07" junto a "7"). */
@@ -106,7 +109,7 @@ export class BoardingService {
               passengerType: true,
               boardedAt: true,
             },
-            with: { traveler: { columns: { fullName: true } } },
+            with: { traveler: { columns: { fullName: true, birthDate: true } } },
           },
         },
       }),
@@ -202,6 +205,10 @@ export class BoardingService {
         rooms: roomsByPassenger.get(passenger.id) ?? [],
         boardedAt: passenger.boardedAt ?? null,
         hasSeatRight,
+        isMinor: isMinorPassenger({
+          passengerType: passenger.passengerType,
+          birthDate: passenger.traveler.birthDate,
+        }),
       }));
     });
 
@@ -213,7 +220,7 @@ export class BoardingService {
       return a.fullName.localeCompare(b.fullName, "es", { sensitivity: "base" });
     });
 
-    return { boardingPoints, rows };
+    return { boardingPoints, rows, hasMinors: rows.some((row) => row.isMinor) };
   }
 
   /** Tour de la agencia de la sesión (404 si es ajeno o está borrado). */
@@ -238,9 +245,10 @@ export class BoardingService {
   /** Lista del Centro de Control (con sesión): identifica a cada pasajero por su `travelerId`. */
   static async getPanelList(tourId: string, agencyId: string, now: Date = new Date()) {
     const tour = await BoardingService.findAgencyTour(tourId, agencyId);
-    const { boardingPoints, rows } = await BoardingService.loadRows(tour);
+    const { boardingPoints, rows, hasMinors } = await BoardingService.loadRows(tour);
     return {
       canMarkBoarding: canMarkBoarding(tour, now),
+      hasMinors,
       temporalStatus: getTourTemporalStatus(
         tour.departureDateTime,
         tour.cancelledAt,
@@ -258,6 +266,7 @@ export class BoardingService {
         boardingPointCode: row.boardingPointCode,
         rooms: row.rooms,
         boardedAt: row.boardedAt,
+        isMinor: row.isMinor,
       })),
     };
   }

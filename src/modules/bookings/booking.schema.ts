@@ -1,7 +1,10 @@
 import { z } from "zod";
 import {
+  ADULT_AGE,
   BIRTH_DATE_REQUIRED_ERROR,
   FUTURE_BIRTH_DATE_ERROR,
+  MINOR_HOLDER_ERROR,
+  hasReachedAge,
   isFutureDate,
 } from "../../shared/utils/mexico-date.util.js";
 import { baseTravelerSchema } from "../travelers/travelers.schema.js";
@@ -42,7 +45,13 @@ export const mainClientSchema = baseTravelerSchema
     birthDate: requiredBirthDate,
     boardingPoint: z.string().min(1, "Debes seleccionar en qué punto subirás al autobús"),
   })
-  .superRefine(refineTravelerPhones);
+  .superRefine(refineTravelerPhones)
+  // Un menor de 18 años nunca es titular de una reserva (decisión del usuario, 2026-11-23).
+  .superRefine((data, ctx) => {
+    if (data.birthDate && !hasReachedAge(data.birthDate, ADULT_AGE)) {
+      ctx.addIssue({ code: "custom", message: MINOR_HOLDER_ERROR, path: ["birthDate"] });
+    }
+  });
 
 const companionSchema = baseTravelerSchema
   .extend({
@@ -125,6 +134,11 @@ export const publicPreBookingBodySchema = z
       .number()
       .int("Los lugares deben ser un número entero")
       .min(1, "Debe apartar al menos 1 lugar"),
+    // Quien aparta desde el folleto declara ser el titular responsable y mayor de edad
+    // (feedback del PM, 2026-11-23). No se guarda: la constancia legal es la casilla del Magic Link.
+    adultDeclarationAccepted: z.literal(true, {
+      error: "Debes declarar que eres mayor de 18 años y titular responsable de la reserva",
+    }),
   })
   .superRefine((data, ctx) =>
     refinePhoneCountry(ctx, data.whatsapp, data.whatsappCountry, "whatsapp"),

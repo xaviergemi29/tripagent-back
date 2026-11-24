@@ -1,3 +1,4 @@
+import { isMinorPassenger } from "../../shared/utils/mexico-date.util.js";
 import { eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { magicTokens } from "../../db/schema.js";
@@ -185,8 +186,18 @@ export class MagicTokenService {
             // Teléfono de contacto del pasajero (columna del estado de cuenta PDF).
             phone: p.traveler.whatsappPhone ?? null,
             boardingPointDetails: point ? { location: point.location, time: point.time } : null,
+            // Aviso de menores (Art. 58, fr. X Ter, LGT); la fecha de nacimiento no se envía.
+            isMinor: isMinorPassenger({
+              passengerType: p.passengerType,
+              birthDate: p.traveler.birthDate,
+            }),
           };
         }),
+        hasMinors: booking.passengers.some(
+          (p) =>
+            p.status === "ACTIVE" &&
+            isMinorPassenger({ passengerType: p.passengerType, birthDate: p.traveler.birthDate }),
+        ),
         agency: {
           name: agency.name,
           phone: agency.phone,
@@ -222,7 +233,17 @@ export class MagicTokenService {
             name: p.traveler.fullName,
             isTitular: p.isTitular,
             boardingPoint: p.boardingPoint,
+            isMinor: isMinorPassenger({
+              passengerType: p.passengerType,
+              birthDate: p.traveler.birthDate,
+            }),
           })),
+          // Aviso de menores (Art. 58, fr. X Ter, LGT) en "Métodos y opciones de pago".
+          hasMinors: booking.passengers.some(
+            (p) =>
+              p.status === "ACTIVE" &&
+              isMinorPassenger({ passengerType: p.passengerType, birthDate: p.traveler.birthDate }),
+          ),
           totalAmount: Number(booking.totalPrice),
           depositAmount: tour.depositPerPerson
             ? Number(tour.depositPerPerson) * booking.passengers.length

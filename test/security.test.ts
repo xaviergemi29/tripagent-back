@@ -244,6 +244,7 @@ describe("API: CORS, encabezados, login y límite de intentos", () => {
           fullName: "Ana Torres",
           whatsapp: "2281234567",
           numberPassengers: 1,
+          adultDeclarationAccepted: true,
         },
       });
 

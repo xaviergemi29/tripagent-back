@@ -2,6 +2,7 @@ import { and, eq, isNull, ne } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { bookings, tours, bookingPassengers } from "../../db/schema.js";
 import { NotFoundError } from "../../shared/errors/domain-errors.js";
+import { isMinorPassenger } from "../../shared/utils/mexico-date.util.js";
 import { findBoardingPoint, matchesBoardingPoint } from "../../shared/utils/boarding-point.util.js";
 
 export class TourManifestService {
@@ -34,7 +35,7 @@ export class TourManifestService {
       with: {
         passengers: {
           where: eq(bookingPassengers.status, "ACTIVE"),
-          columns: { isTitular: true, seatLabel: true, boardingPoint: true },
+          columns: { isTitular: true, seatLabel: true, boardingPoint: true, passengerType: true },
           // Solo lo que imprime el manifiesto de abordaje.
           with: {
             traveler: {
@@ -43,6 +44,7 @@ export class TourManifestService {
                 fullName: true,
                 emergencyContactName: true,
                 emergencyContactPhone: true,
+                birthDate: true,
               },
             },
           },
@@ -86,6 +88,11 @@ export class TourManifestService {
             : null,
         balance: p.isTitular ? fin.balance : 0,
         groupSize: booking.passengers.length,
+        // Aviso de menores (Art. 58, fr. X Ter, LGT); la fecha de nacimiento no se imprime.
+        isMinor: isMinorPassenger({
+          passengerType: p.passengerType,
+          birthDate: p.traveler.birthDate,
+        }),
       }));
     });
 
@@ -127,6 +134,7 @@ export class TourManifestService {
       tourTitle: tour.title,
       departureDateTime: tour.departureDateTime,
       currency: tour.currency,
+      hasMinors: allPassengers.some((p) => p.isMinor),
       boardingPoints: manifestByBoardingPoint,
     };
   }

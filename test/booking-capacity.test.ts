@@ -191,6 +191,7 @@ describe("Cupo y sobreventa", () => {
           fullName: "Mariana Ruiz",
           whatsapp: "2299887766",
           numberPassengers: 2,
+          adultDeclarationAccepted: true,
           ...payload,
         },
       });
@@ -272,6 +273,11 @@ describe("Cupo y sobreventa", () => {
 
       assert.equal((await preBooking({ whatsapp: "123" })).statusCode, 400);
       assert.equal((await preBooking({ numberPassengers: 0 })).statusCode, 400);
+      // Sin la declaración de mayoría de edad del titular (feedback del PM, 2026-11-23).
+      const noDeclaration = await preBooking({ adultDeclarationAccepted: undefined });
+      assert.equal(noDeclaration.statusCode, 400);
+      assert.match(noDeclaration.body, /mayor de 18 años/);
+      assert.equal((await preBooking({ adultDeclarationAccepted: false })).statusCode, 400);
       assert.equal((await preBooking({ fullName: "A" })).statusCode, 400);
     });
   });

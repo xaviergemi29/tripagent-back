@@ -256,6 +256,7 @@ describe("Rutas públicas de una agencia en solo lectura", () => {
         fullName: "Mariana Ruiz",
         whatsapp: "2299887766",
         numberPassengers: 2,
+        adultDeclarationAccepted: true,
       },
     });
 

@@ -1,3 +1,8 @@
+import {
+  ADULT_AGE,
+  MINOR_HOLDER_ERROR,
+  hasReachedAge,
+} from "../../shared/utils/mexico-date.util.js";
 import { and, count, eq, inArray, isNull, ne } from "drizzle-orm";
 import { db, type DbTransaction } from "../../db/index.js";
 import type {
@@ -140,6 +145,13 @@ export class BookingService {
         ),
       });
 
+      // Un menor nunca es titular (2026-11-23). Con un viajero ya registrado manda su fecha guardada
+      // (regla 3: no se sobrescribe), así que se revisa la fecha efectiva, no solo la enviada.
+      const holderBirthDate = existingTitular?.birthDate || payload.mainClient.birthDate;
+      if (holderBirthDate && !hasReachedAge(holderBirthDate, ADULT_AGE)) {
+        throw new BusinessRuleError(MINOR_HOLDER_ERROR);
+      }
+
       if (existingTitular) {
         // Solo se completan los campos vacíos del perfil (decisión del PM, 2026-11-14) y, si el
         // número era anterior al selector de lada, se confirma con el país que eligió el cliente.
@@ -256,12 +268,20 @@ export class BookingService {
         const existingCompanionsInTour = await tx.query.bookingPassengers.findFirst({
           where: and(
             inArray(bookingPassengers.travelerId, newPassengersToInsert),
+            // Solo cuenta un lugar vigente: un acompañante dado de baja puede volver (regla 2).
+            eq(bookingPassengers.status, "ACTIVE"),
             inArray(
               bookingPassengers.bookingId,
               tx
                 .select({ id: bookings.id })
                 .from(bookings)
-                .where(and(eq(bookings.tourId, tour.id), ne(bookings.status, "CANCELLED"))),
+                .where(
+                  and(
+                    eq(bookings.tourId, tour.id),
+                    ne(bookings.status, "CANCELLED"),
+                    isNull(bookings.deletedAt),
+                  ),
+                ),
             ),
           ),
         });
@@ -478,16 +498,24 @@ export class BookingService {
       titularId = newTitular.id;
     }
 
-    // 3. El viajero no puede estar ya en el manifiesto de otra reserva activa de este tour.
+    // 3. El viajero no puede tener ya un lugar activo en este tour (ninguna reserva vigente).
     const existingPassengerInTour = await tx.query.bookingPassengers.findFirst({
       where: and(
         eq(bookingPassengers.travelerId, titularId),
+        // Solo cuenta un lugar vigente: quien fue dado de baja puede volver a apartar (regla 2).
+        eq(bookingPassengers.status, "ACTIVE"),
         inArray(
           bookingPassengers.bookingId,
           tx
             .select({ id: bookings.id })
             .from(bookings)
-            .where(and(eq(bookings.tourId, tour.id), ne(bookings.status, "CANCELLED"))),
+            .where(
+              and(
+                eq(bookings.tourId, tour.id),
+                ne(bookings.status, "CANCELLED"),
+                isNull(bookings.deletedAt),
+              ),
+            ),
         ),
       ),
     });

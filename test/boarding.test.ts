@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { db } from "../src/db/index.js";
+import { getTodayInMexico } from "../src/shared/utils/mexico-date.util.js";
 import {
   STAFF_SHARE_TOKEN_LENGTH,
   buildBoardingKey,
@@ -177,7 +178,11 @@ describe("Pase de lista: Centro de Control (con sesión)", () => {
         { hotelName: "Hotel Sierra", roomNumber: "102", roomType: "MATRIMONIAL", typeIndex: 2 },
       ],
       boardedAt: null,
+      isMinor: false,
     });
+    // Diego es CHILD: la lista avisa de menores sin exponer su fecha de nacimiento.
+    assert.equal(data.hasMinors, true);
+    assert.equal(data.passengers[1].isMinor, true);
     assert.equal(data.passengers[1].holderName, "Mariana Ruiz");
     assert.equal(data.passengers[1].boardedAt, "2099-03-10T12:00:00.000Z");
   });
@@ -394,11 +399,10 @@ describe("Pase de lista: enlace de staff (sin sesión)", () => {
   });
 
   it("FINALIZADO dentro de la vigencia del enlace: se consulta, pero no se marca (409)", async () => {
-    // Regresó ayer: el enlace vence hoy al final del día; el tour ya está FINALIZADO.
-    const today = new Date();
-    const iso = (d: Date) => d.toISOString().slice(0, 10);
-    const yesterday = new Date(today.getTime() - 86_400_000);
-    const finished = tourRow({ departureDateTime: iso(yesterday), returnDate: iso(yesterday) });
+    // Regresó ayer (en CDMX): el enlace vence hoy al final del día; el tour ya está FINALIZADO.
+    const todayMx = new Date(`${getTodayInMexico()}T12:00:00Z`);
+    const yesterday = new Date(todayMx.getTime() - 86_400_000).toISOString().slice(0, 10);
+    const finished = tourRow({ departureDateTime: yesterday, returnDate: yesterday });
     mockReads(finished);
     const view = await app.inject({
       method: "GET",

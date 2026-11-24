@@ -199,6 +199,46 @@ describe("Magic Link (portal del viajero): decisiones del PM", () => {
     assert.equal(data.passengers[2].boardingPointDetails, null);
   });
 
+  it("aviso de menores: hasMinors e isMinor por pasajero (Niño o menor de 18), sin enviar la fecha", async () => {
+    const token = magicTokenWith("CONFIRMED", "PAID", 6000);
+    const thisYear = new Date().getFullYear();
+    token.booking.passengers = [
+      {
+        isTitular: true,
+        status: "ACTIVE",
+        passengerType: "ADULT",
+        boardingPoint: "Plaza (06:00)",
+        traveler: { fullName: "Ana Torres", birthDate: "1985-04-02" },
+      },
+      {
+        isTitular: false,
+        status: "ACTIVE",
+        passengerType: "ADULT",
+        boardingPoint: "Plaza (06:00)",
+        // Marcado como Adulto pero con 16 años: también cuenta como menor.
+        traveler: { fullName: "Leo Torres", birthDate: `${thisYear - 16}-01-10` },
+      },
+      {
+        isTitular: false,
+        status: "ACTIVE",
+        passengerType: "CHILD",
+        boardingPoint: "Plaza (06:00)",
+        traveler: { fullName: "Mía Torres", birthDate: null },
+      },
+    ] as never;
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+    const { data } = res.json();
+
+    assert.equal(data.hasMinors, true);
+    assert.deepEqual(
+      data.passengers.map((p: { isMinor: boolean }) => p.isMinor),
+      [false, true, true],
+    );
+    assert.ok(!res.body.includes("1985-04-02"));
+  });
+
   it("comprobante PDF: la agencia trae logo, colores de marca, correo y tarjeta", async () => {
     const token = magicTokenWith("CONFIRMED", "PARTIAL", 4500);
     Object.assign(token.tour.agency, {

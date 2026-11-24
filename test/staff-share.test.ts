@@ -431,6 +431,7 @@ describe("Enlace de staff: ruta pública", () => {
           { code: "P2", location: "Las Ánimas", time: "06:30" },
         ],
         canMarkBoarding: true,
+        hasMinors: true,
         passengers: [
           {
             boardingKey: buildBoardingKey(VALID_TOKEN, "bp-row-diego"),
@@ -443,6 +444,7 @@ describe("Enlace de staff: ruta pública", () => {
             seatRightStatus: "CONFIRMED",
             rooms: [],
             boardedAt: "2099-03-10T12:05:00.000Z",
+            isMinor: true,
           },
           {
             boardingKey: buildBoardingKey(VALID_TOKEN, "bp-row-mariana"),
@@ -455,6 +457,7 @@ describe("Enlace de staff: ruta pública", () => {
             seatRightStatus: "CONFIRMED",
             rooms: [],
             boardedAt: null,
+            isMinor: false,
           },
           {
             boardingKey: buildBoardingKey(VALID_TOKEN, "bp-row-ana"),
@@ -467,6 +470,7 @@ describe("Enlace de staff: ruta pública", () => {
             seatRightStatus: "PENDING_DEPOSIT",
             rooms: [],
             boardedAt: null,
+            isMinor: false,
           },
         ],
       },

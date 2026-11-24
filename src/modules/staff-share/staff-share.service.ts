@@ -181,6 +181,7 @@ export class StaffShareService {
         typeIndex,
       })),
       boardedAt: row.boardedAt,
+      isMinor: row.isMinor,
     }));
   }
 
@@ -191,7 +192,7 @@ export class StaffShareService {
   static async getPublicView(rawToken: string, now: Date = new Date()) {
     const { tour, token, expiresAt } = await StaffShareService.resolvePublicTour(rawToken, now);
 
-    const [blockedRows, { boardingPoints, rows }] = await Promise.all([
+    const [blockedRows, { boardingPoints, rows, hasMinors }] = await Promise.all([
       db
         .select({ seatLabel: tourBlockedSeats.seatLabel })
         .from(tourBlockedSeats)
@@ -223,6 +224,7 @@ export class StaffShareService {
       blockedSeats: blockedRows.map((row) => row.seatLabel).sort(compareSeatLabels),
       boardingPoints,
       canMarkBoarding: StaffShareService.canMarkFromLink(tour, now),
+      hasMinors,
       passengers: StaffShareService.toPublicPassengers(rows, token),
     };
   }
@@ -230,9 +232,10 @@ export class StaffShareService {
   /** Solo el pase de lista (la página lo vuelve a pedir cada 15 s): más ligero que la vista. */
   static async getPublicBoarding(rawToken: string, now: Date = new Date()) {
     const { tour, token } = await StaffShareService.resolvePublicTour(rawToken, now);
-    const { boardingPoints, rows } = await BoardingService.loadRows(tour);
+    const { boardingPoints, rows, hasMinors } = await BoardingService.loadRows(tour);
     return {
       canMarkBoarding: StaffShareService.canMarkFromLink(tour, now),
+      hasMinors,
       temporalStatus: getTourTemporalStatus(
         tour.departureDateTime,
         tour.cancelledAt,

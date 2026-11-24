@@ -1,7 +1,12 @@
 import { after, afterEach, before, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { db } from "../src/db/index.js";
-import { getTodayInMexico } from "../src/shared/utils/mexico-date.util.js";
+import {
+  MINOR_HOLDER_ERROR,
+  getTodayInMexico,
+  hasReachedAge,
+  isMinorPassenger,
+} from "../src/shared/utils/mexico-date.util.js";
 import { AGENCY_A, USER_A, chain, createTestApp, sessionCookie, type TestApp } from "./helpers.js";
 
 // Reglas de fechas (2026-11-17): fecha de nacimiento obligatoria y no futura en el Magic Link, y un
@@ -56,6 +61,31 @@ describe("Reglas de fechas", () => {
         privacyNoticeAccepted: true,
       },
     });
+
+  it("Magic Link: un titular menor de 18 años → 400 con el mensaje de la regla", async () => {
+    const today = getTodayInMexico();
+    const seventeen = `${Number(today.slice(0, 4)) - 17}${today.slice(4)}`;
+    const res = await register(seventeen);
+    assert.equal(res.statusCode, 400);
+    assert.ok(res.body.includes(MINOR_HOLDER_ERROR));
+  });
+
+  it("isMinorPassenger: Niño o menor de 18 por fecha; un adulto sin fecha no lo es", () => {
+    const now = new Date("2026-11-23T18:00:00Z");
+    assert.equal(isMinorPassenger({ passengerType: "CHILD", birthDate: null }, now), true);
+    assert.equal(isMinorPassenger({ passengerType: "ADULT", birthDate: "2010-01-01" }, now), true);
+    assert.equal(isMinorPassenger({ passengerType: "ADULT", birthDate: "2008-11-23" }, now), false);
+    assert.equal(isMinorPassenger({ passengerType: "ADULT", birthDate: null }, now), false);
+  });
+
+  it("hasReachedAge: el día de su cumpleaños 18 ya es mayor; un día antes, no", () => {
+    const now = new Date("2026-11-23T18:00:00Z"); // 23 de noviembre en CDMX
+    assert.equal(hasReachedAge("2008-11-23", 18, now), true);
+    assert.equal(hasReachedAge("2008-11-24", 18, now), false);
+    // 29 de febrero: en años no bisiestos cumple el 1 de marzo.
+    assert.equal(hasReachedAge("2008-02-29", 18, new Date("2026-02-28T18:00:00Z")), false);
+    assert.equal(hasReachedAge("2008-02-29", 18, new Date("2026-03-01T18:00:00Z")), true);
+  });
 
   it("Magic Link: sin fecha de nacimiento del titular → 400", async () => {
     const res = await register(undefined);
