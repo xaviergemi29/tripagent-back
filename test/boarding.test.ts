@@ -86,8 +86,46 @@ const bookingRows = () => [
   },
 ];
 
+type RoomRow = {
+  roomId: string;
+  hotelId: string;
+  hotelName: string;
+  roomNumber: string | null;
+  roomType: string | null;
+  matrimonialBeds: number;
+  singleBeds: number;
+};
+
+/** Habitaciones del tour en el orden de la consulta (hotel, `position`): dos de 1 matrimonial. */
+const defaultRooms = (): RoomRow[] => [
+  {
+    roomId: "r1",
+    hotelId: "h1",
+    hotelName: "Hotel Sierra",
+    roomNumber: null,
+    roomType: "MATRIMONIAL",
+    matrimonialBeds: 1,
+    singleBeds: 0,
+  },
+  {
+    roomId: "r2",
+    hotelId: "h1",
+    hotelName: "Hotel Sierra",
+    roomNumber: "102",
+    roomType: "MATRIMONIAL",
+    matrimonialBeds: 1,
+    singleBeds: 0,
+  },
+];
+
 /** Tour (evaluando el WHERE real), reservas y habitaciones (una asignada a Mariana). */
-function mockReads(tour: Record<string, unknown> | null = tourRow()) {
+function mockReads(
+  tour: Record<string, unknown> | null = tourRow(),
+  rooms: RoomRow[] = defaultRooms(),
+  assignments: { roomId: string; bookingPassengerId: string }[] = [
+    { roomId: "r2", bookingPassengerId: "bp-row-mariana" },
+  ],
+) {
   mock.method(db.query.tours, "findFirst", (async (args: { where: SQL }) =>
     tour && rowMatches(args.where, tour) ? tour : undefined) as never);
   mock.method(db.query.bookings, "findMany", (async () => bookingRows()) as never);
@@ -95,25 +133,8 @@ function mockReads(tour: Record<string, unknown> | null = tourRow()) {
   mock.method(db, "select", (() => {
     selectCalls += 1;
     // 1.ª: habitaciones del tour; 2.ª: asignaciones de los pasajeros.
-    if (selectCalls === 1) {
-      return chain([
-        {
-          roomId: "r1",
-          hotelId: "h1",
-          hotelName: "Hotel Sierra",
-          roomNumber: null,
-          roomType: "MATRIMONIAL",
-        },
-        {
-          roomId: "r2",
-          hotelId: "h1",
-          hotelName: "Hotel Sierra",
-          roomNumber: "102",
-          roomType: "MATRIMONIAL",
-        },
-      ]);
-    }
-    return chain([{ roomId: "r2", bookingPassengerId: "bp-row-mariana" }]);
+    if (selectCalls === 1) return chain(rooms);
+    return chain(assignments);
   }) as never);
 }
 
@@ -175,7 +196,14 @@ describe("Pase de lista: Centro de Control (con sesión)", () => {
       seatLabel: "4",
       boardingPointCode: "P1",
       rooms: [
-        { hotelName: "Hotel Sierra", roomNumber: "102", roomType: "MATRIMONIAL", typeIndex: 2 },
+        {
+          hotelName: "Hotel Sierra",
+          roomNumber: "102",
+          roomType: "MATRIMONIAL",
+          matrimonialBeds: 1,
+          singleBeds: 0,
+          typeIndex: 2,
+        },
       ],
       boardedAt: null,
       isMinor: false,
@@ -185,6 +213,62 @@ describe("Pase de lista: Centro de Control (con sesión)", () => {
     assert.equal(data.passengers[1].isMinor, true);
     assert.equal(data.passengers[1].holderName, "Mariana Ruiz");
     assert.equal(data.passengers[1].boardedAt, "2099-03-10T12:00:00.000Z");
+  });
+
+  it("GET: typeIndex se cuenta por configuración de camas dentro de cada hotel", async () => {
+    const roomRow = (
+      roomId: string,
+      hotelId: string,
+      matrimonialBeds: number,
+      singleBeds: number,
+      roomType: string | null,
+    ): RoomRow => ({
+      roomId,
+      hotelId,
+      hotelName: hotelId === "h1" ? "Hotel Sierra" : "Hotel Mar",
+      roomNumber: null,
+      roomType,
+      matrimonialBeds,
+      singleBeds,
+    });
+    mockReads(
+      tourRow(),
+      [
+        roomRow("r1", "h1", 0, 3, null),
+        roomRow("r2", "h1", 0, 2, "DOUBLE_INDIVIDUAL"),
+        roomRow("r3", "h1", 0, 3, null),
+        roomRow("r4", "h2", 0, 3, null),
+      ],
+      [
+        { roomId: "r3", bookingPassengerId: "bp-row-mariana" },
+        { roomId: "r4", bookingPassengerId: "bp-row-mariana" },
+        { roomId: "r2", bookingPassengerId: "bp-row-diego" },
+      ],
+    );
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/tours/${TOUR_ID}/boarding`,
+      cookies: cookies(),
+    });
+    assert.equal(res.statusCode, 200);
+    const [mariana, diego] = res.json().data.passengers;
+    assert.deepEqual(
+      mariana.rooms.map((r: Record<string, unknown>) => [
+        r.hotelName,
+        r.roomType,
+        r.matrimonialBeds,
+        r.singleBeds,
+        r.typeIndex,
+      ]),
+      [
+        ["Hotel Sierra", null, 0, 3, 2], // la 2.ª de 3 individuales en Sierra (r2 es otra configuración)
+        ["Hotel Mar", null, 0, 3, 1], // el conteo reinicia en cada hotel
+      ],
+    );
+    assert.deepEqual(
+      diego.rooms.map((r: Record<string, unknown>) => [r.roomType, r.typeIndex]),
+      [["DOUBLE_INDIVIDUAL", 1]],
+    );
   });
 
   it("GET de un tour ajeno → 404", async () => {

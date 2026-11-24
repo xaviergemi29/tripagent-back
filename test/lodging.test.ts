@@ -1,9 +1,16 @@
 import { after, afterEach, before, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
-import { LODGING_ROOM_CAPACITY } from "../src/shared/constants/domain.constants.js";
+import { LODGING_ROOM_TYPES } from "../src/shared/constants/domain.constants.js";
 import { planRoomBatch } from "../src/modules/lodging/lodging.service.js";
 import { createLodgingRoomsBodySchema } from "../src/modules/lodging/lodging.schema.js";
-import { resolveRoomTypeForCapacity } from "../src/shared/utils/lodging-room.util.js";
+import {
+  getBedOfSlot,
+  getRoomBedsError,
+  getRoomCapacity,
+  LEGACY_ROOM_TYPE_BEDS,
+  legacyRoomTypeForBeds,
+  withoutBed,
+} from "../src/shared/utils/lodging-room.util.js";
 import { createFakeLodgingDb, type LodgingTables } from "./fake-lodging-db.js";
 import {
   AGENCY_A,
@@ -86,17 +93,31 @@ const passenger = (id: string, bookingN: number, travelerN: number, overrides: R
   ...overrides,
 });
 
-const room = (id: string, hotelId: string, overrides: Row = {}): Row => ({
-  id,
-  agencyId: AGENCY_A,
-  tourId: TOUR_ID,
-  hotelId,
-  roomType: "MATRIMONIAL",
-  capacity: 2,
-  position: 1,
-  roomNumber: null,
-  status: "CONSULTED",
-  ...overrides,
+/** Habitación; con `roomType` heredado toma sus camas y capacidad (se pueden sobrescribir). */
+const room = (id: string, hotelId: string, overrides: Row = {}): Row => {
+  const legacyType =
+    LODGING_ROOM_TYPES.find((type) => type === overrides.roomType) ?? "MATRIMONIAL";
+  const beds = LEGACY_ROOM_TYPE_BEDS[legacyType];
+  return {
+    id,
+    agencyId: AGENCY_A,
+    tourId: TOUR_ID,
+    hotelId,
+    roomType: legacyType,
+    ...beds,
+    capacity: getRoomCapacity(beds),
+    position: 1,
+    roomNumber: null,
+    status: "CONSULTED",
+    ...overrides,
+  };
+};
+
+/** Lote del body nuevo: camas y cantidad. */
+const beds = (matrimonialBeds: number, singleBeds: number, quantity = 1) => ({
+  matrimonialBeds,
+  singleBeds,
+  quantity,
 });
 
 const assignment = (roomId: string, hotelId: string, slotIndex: number, bpId: string): Row => ({
@@ -173,46 +194,87 @@ function baseTables(overrides: Partial<LodgingTables> = {}): Partial<LodgingTabl
   };
 }
 
-describe("resolveRoomTypeForCapacity", () => {
-  it("conserva el tipo si la capacidad coincide con la de su tipo", () => {
-    assert.equal(resolveRoomTypeForCapacity("MATRIMONIAL", 2), "MATRIMONIAL");
-    assert.equal(resolveRoomTypeForCapacity("DOUBLE_INDIVIDUAL", 2), "DOUBLE_INDIVIDUAL");
-    assert.equal(resolveRoomTypeForCapacity("TRIPLE", 3), "TRIPLE");
-    assert.equal(resolveRoomTypeForCapacity("QUADRUPLE", 4), "QUADRUPLE");
-    assert.equal(resolveRoomTypeForCapacity("SINGLE", 1), "SINGLE");
+describe("Reglas de camas (lodging-room.util)", () => {
+  it("capacidad = 2 · matrimoniales + individuales", () => {
+    assert.equal(getRoomCapacity({ matrimonialBeds: 1, singleBeds: 0 }), 2);
+    assert.equal(getRoomCapacity({ matrimonialBeds: 0, singleBeds: 2 }), 2);
+    assert.equal(getRoomCapacity({ matrimonialBeds: 1, singleBeds: 1 }), 3);
+    assert.equal(getRoomCapacity({ matrimonialBeds: 2, singleBeds: 2 }), 6);
   });
 
-  it("si no coincide, toma el tipo de la nueva capacidad (2 lugares → Doble Individual)", () => {
-    assert.equal(resolveRoomTypeForCapacity("MATRIMONIAL", 1), "SINGLE");
-    assert.equal(resolveRoomTypeForCapacity("DOUBLE_INDIVIDUAL", 1), "SINGLE");
-    assert.equal(resolveRoomTypeForCapacity("TRIPLE", 2), "DOUBLE_INDIVIDUAL");
-    assert.equal(resolveRoomTypeForCapacity("QUADRUPLE", 3), "TRIPLE");
-    assert.equal(resolveRoomTypeForCapacity("QUADRUPLE", 2), "DOUBLE_INDIVIDUAL");
-    assert.equal(resolveRoomTypeForCapacity("TRIPLE", 1), "SINGLE");
+  it("límites: matrimoniales 0..2, individuales 0..4, al menos una cama, capacidad ≤ 6", () => {
+    for (const valid of [
+      [0, 1],
+      [1, 0],
+      [0, 4],
+      [2, 0],
+      [2, 2],
+      [1, 4],
+    ] as const) {
+      const [matrimonialBeds, singleBeds] = valid;
+      assert.equal(getRoomBedsError({ matrimonialBeds, singleBeds }), null, String(valid));
+    }
+    for (const invalid of [
+      [0, 0],
+      [3, 0],
+      [0, 5],
+      [-1, 2],
+      [2, 3], // 7 personas
+      [2, 4], // 8 personas
+      [1.5, 0],
+    ] as const) {
+      const [matrimonialBeds, singleBeds] = invalid;
+      assert.ok(getRoomBedsError({ matrimonialBeds, singleBeds }), String(invalid));
+    }
   });
 
-  it("capacidad fuera de 1..4 conserva el tipo actual", () => {
-    assert.equal(resolveRoomTypeForCapacity("TRIPLE", 0), "TRIPLE");
-    assert.equal(resolveRoomTypeForCapacity("QUADRUPLE", 5), "QUADRUPLE");
+  it("getBedOfSlot: primero las matrimoniales (2 lugares cada una), después las individuales", () => {
+    const room = { matrimonialBeds: 2, singleBeds: 2 };
+    assert.deepEqual(getBedOfSlot(room, 1), { kind: "MATRIMONIAL", bedIndex: 1, slots: [1, 2] });
+    assert.deepEqual(getBedOfSlot(room, 2), { kind: "MATRIMONIAL", bedIndex: 1, slots: [1, 2] });
+    assert.deepEqual(getBedOfSlot(room, 3), { kind: "MATRIMONIAL", bedIndex: 2, slots: [3, 4] });
+    assert.deepEqual(getBedOfSlot(room, 4), { kind: "MATRIMONIAL", bedIndex: 2, slots: [3, 4] });
+    assert.deepEqual(getBedOfSlot(room, 5), { kind: "SINGLE", bedIndex: 1, slots: [5] });
+    assert.deepEqual(getBedOfSlot(room, 6), { kind: "SINGLE", bedIndex: 2, slots: [6] });
+    assert.equal(getBedOfSlot(room, 7), null);
+    assert.equal(getBedOfSlot(room, 0), null);
+    assert.deepEqual(getBedOfSlot({ matrimonialBeds: 0, singleBeds: 3 }, 2), {
+      kind: "SINGLE",
+      bedIndex: 2,
+      slots: [2],
+    });
+  });
+
+  it("withoutBed quita una cama de la clase indicada", () => {
+    assert.deepEqual(withoutBed({ matrimonialBeds: 2, singleBeds: 1 }, "MATRIMONIAL"), {
+      matrimonialBeds: 1,
+      singleBeds: 1,
+    });
+    assert.deepEqual(withoutBed({ matrimonialBeds: 2, singleBeds: 1 }, "SINGLE"), {
+      matrimonialBeds: 2,
+      singleBeds: 0,
+    });
+  });
+
+  it("legacyRoomTypeForBeds: solo las 5 combinaciones exactas; dos individuales nunca son matrimonial", () => {
+    assert.equal(legacyRoomTypeForBeds({ matrimonialBeds: 0, singleBeds: 1 }), "SINGLE");
+    assert.equal(legacyRoomTypeForBeds({ matrimonialBeds: 1, singleBeds: 0 }), "MATRIMONIAL");
+    assert.equal(legacyRoomTypeForBeds({ matrimonialBeds: 0, singleBeds: 2 }), "DOUBLE_INDIVIDUAL");
+    assert.equal(legacyRoomTypeForBeds({ matrimonialBeds: 1, singleBeds: 1 }), "TRIPLE");
+    assert.equal(legacyRoomTypeForBeds({ matrimonialBeds: 2, singleBeds: 0 }), "QUADRUPLE");
+    assert.equal(legacyRoomTypeForBeds({ matrimonialBeds: 0, singleBeds: 3 }), null);
+    assert.equal(legacyRoomTypeForBeds({ matrimonialBeds: 1, singleBeds: 2 }), null);
+    assert.equal(legacyRoomTypeForBeds({ matrimonialBeds: 2, singleBeds: 2 }), null);
   });
 });
 
 describe("planRoomBatch", () => {
-  it("continúa la posición en el orden del body con la capacidad del tipo", () => {
-    assert.deepEqual(
-      planRoomBatch(
-        [
-          { roomType: "MATRIMONIAL", quantity: 2 },
-          { roomType: "QUADRUPLE", quantity: 1 },
-        ],
-        4,
-      ),
-      [
-        { roomType: "MATRIMONIAL", capacity: 2, position: 4 },
-        { roomType: "MATRIMONIAL", capacity: 2, position: 5 },
-        { roomType: "QUADRUPLE", capacity: 4, position: 6 },
-      ],
-    );
+  it("continúa la posición en el orden del body con capacidad y tipo heredado del servidor", () => {
+    assert.deepEqual(planRoomBatch([beds(1, 0, 2), beds(0, 3, 1)], 4), [
+      { roomType: "MATRIMONIAL", matrimonialBeds: 1, singleBeds: 0, capacity: 2, position: 4 },
+      { roomType: "MATRIMONIAL", matrimonialBeds: 1, singleBeds: 0, capacity: 2, position: 5 },
+      { roomType: null, matrimonialBeds: 0, singleBeds: 3, capacity: 3, position: 6 },
+    ]);
   });
 });
 
@@ -325,12 +387,18 @@ describe("Hospedaje del tour: /api/lodging", () => {
       assert.deepEqual(hotel1.rooms[0], {
         id: ROOM_MAT,
         roomType: "MATRIMONIAL",
+        matrimonialBeds: 1,
+        singleBeds: 0,
         capacity: 2,
         position: 1,
         roomNumber: "101",
         status: "CONSULTED",
         slots: [],
       });
+      assert.deepEqual(
+        [hotel1.rooms[1].matrimonialBeds, hotel1.rooms[1].singleBeds],
+        [0, 2], // Doble Individual: dos camas individuales
+      );
       assert.equal(data.totalRooms, 4);
       assert.equal(data.totalCapacity, 2 + 2 + 2 + 3);
     });
@@ -417,43 +485,39 @@ describe("Hospedaje del tour: /api/lodging", () => {
   });
 
   describe("POST /lodging/:tourId/rooms", () => {
-    it("crea el hotel con habitaciones sin número, CONSULTED y posición 1..n en el orden del body", async () => {
+    const roomSummary = (r: Row) => [r.roomType, r.matrimonialBeds, r.singleBeds, r.capacity];
+
+    it("crea el hotel con habitaciones por camas, sin número, CONSULTED y posición 1..n en el orden del body", async () => {
       const fake = createFakeLodgingDb({ tours: [tour(TOUR_ID)] });
 
       const res = await postRooms({
         hotelName: "  Hotel Nuevo  ",
-        rooms: [
-          { roomType: "MATRIMONIAL", quantity: 2 },
-          { roomType: "DOUBLE_INDIVIDUAL", quantity: 2 },
-        ],
+        rooms: [beds(1, 0), beds(0, 2), beds(1, 1), beds(0, 3), beds(2, 2)],
       });
 
       assert.equal(res.statusCode, 201);
       const { data } = res.json();
       assert.equal(data.hotel.name, "Hotel Nuevo");
-      assert.equal(data.createdRooms, 4);
-      assert.equal(data.createdCapacity, 8);
+      assert.equal(data.createdRooms, 5);
+      assert.equal(data.createdCapacity, 2 + 2 + 3 + 3 + 6);
       assert.deepEqual(
-        data.hotel.rooms.map((r: Row) => [
-          r.position,
-          r.roomType,
-          r.capacity,
-          r.roomNumber,
-          r.status,
-        ]),
+        data.hotel.rooms.map((r: Row) => [r.position, ...roomSummary(r), r.roomNumber, r.status]),
         [
-          [1, "MATRIMONIAL", 2, null, "CONSULTED"],
-          [2, "MATRIMONIAL", 2, null, "CONSULTED"],
-          [3, "DOUBLE_INDIVIDUAL", 2, null, "CONSULTED"],
-          [4, "DOUBLE_INDIVIDUAL", 2, null, "CONSULTED"],
+          [1, "MATRIMONIAL", 1, 0, 2, null, "CONSULTED"],
+          [2, "DOUBLE_INDIVIDUAL", 0, 2, 2, null, "CONSULTED"],
+          [3, "TRIPLE", 1, 1, 3, null, "CONSULTED"],
+          [4, null, 0, 3, 3, null, "CONSULTED"],
+          [5, null, 2, 2, 6, null, "CONSULTED"],
         ],
       );
       assert.deepEqual(Object.keys(data.hotel.rooms[0]).sort(), [
         "capacity",
         "id",
+        "matrimonialBeds",
         "position",
         "roomNumber",
         "roomType",
+        "singleBeds",
         "slots",
         "status",
       ]);
@@ -462,6 +526,43 @@ describe("Hospedaje del tour: /api/lodging", () => {
       assert.equal(hotelInsert.agencyId, AGENCY_A);
       const roomInsert = fake.writes.find((w) => w.table === "tour_hotel_rooms")?.values as Row[];
       assert.ok(roomInsert.every((r) => r.agencyId === AGENCY_A && r.tourId === TOUR_ID));
+      assert.deepEqual(fake.tables.tour_hotel_rooms.map(roomSummary), [
+        ["MATRIMONIAL", 1, 0, 2],
+        ["DOUBLE_INDIVIDUAL", 0, 2, 2],
+        ["TRIPLE", 1, 1, 3],
+        [null, 0, 3, 3],
+        [null, 2, 2, 6],
+      ]);
+    });
+
+    it("dos camas individuales nunca se guardan ni se devuelven como matrimonial", async () => {
+      const fake = createFakeLodgingDb({ tours: [tour(TOUR_ID)] });
+      const res = await postRooms({ hotelName: "Hotel", rooms: [beds(0, 2)] });
+      assert.equal(res.statusCode, 201);
+      assert.equal(res.json().data.createdRooms, 1);
+      assert.deepEqual(res.json().data.hotel.rooms.map(roomSummary), [
+        ["DOUBLE_INDIVIDUAL", 0, 2, 2],
+      ]);
+      assert.deepEqual(fake.tables.tour_hotel_rooms.map(roomSummary), [
+        ["DOUBLE_INDIVIDUAL", 0, 2, 2],
+      ]);
+      const lodging = (await getLodging()).json().data;
+      assert.deepEqual(lodging.hotels[0].rooms.map(roomSummary), [["DOUBLE_INDIVIDUAL", 0, 2, 2]]);
+    });
+
+    it("configuraciones repetidas se permiten y se crean en el orden del body", async () => {
+      const fake = createFakeLodgingDb({ tours: [tour(TOUR_ID)] });
+      const res = await postRooms({ hotelName: "Hotel", rooms: [beds(1, 0, 1), beds(1, 0, 2)] });
+      assert.equal(res.statusCode, 201);
+      assert.equal(res.json().data.createdRooms, 3);
+      assert.deepEqual(
+        fake.tables.tour_hotel_rooms.map((r) => [r.position, r.matrimonialBeds]),
+        [
+          [1, 1],
+          [2, 1],
+          [3, 1],
+        ],
+      );
     });
 
     it("mismo nombre (otra capitalización) agrega al hotel y la posición continúa desde la mayor", async () => {
@@ -473,7 +574,7 @@ describe("Hospedaje del tour: /api/lodging", () => {
 
       const res = await postRooms({
         hotelName: " hotel REAL ",
-        rooms: [{ roomType: "QUADRUPLE", quantity: 2 }],
+        rooms: [beds(2, 0, 2)],
       });
 
       assert.equal(res.statusCode, 201);
@@ -501,56 +602,20 @@ describe("Hospedaje del tour: /api/lodging", () => {
       );
     });
 
-    it("la capacidad la decide el servidor aunque el body traiga otra", async () => {
+    it("capacidad y tipo heredado los decide el servidor: las camas mandan sobre roomType y capacity", async () => {
       createFakeLodgingDb({ tours: [tour(TOUR_ID)] });
       const res = await postRooms({
         hotelName: "Hotel",
-        rooms: [{ roomType: "TRIPLE", quantity: 1, capacityPerRoom: 99, capacity: 99 }],
+        rooms: [{ ...beds(0, 2), roomType: "MATRIMONIAL", capacityPerRoom: 99, capacity: 99 }],
         totalCapacity: 99,
       });
       assert.equal(res.statusCode, 201);
       const { data } = res.json();
-      assert.equal(data.hotel.rooms[0].capacity, LODGING_ROOM_CAPACITY.TRIPLE);
-      assert.equal(data.createdCapacity, 3);
+      assert.deepEqual(data.hotel.rooms.map(roomSummary), [["DOUBLE_INDIVIDUAL", 0, 2, 2]]);
+      assert.equal(data.createdCapacity, 2);
     });
 
-    it("400 por body inválido sin abrir la transacción", async () => {
-      const fake = createFakeLodgingDb({ tours: [tour(TOUR_ID)] });
-      const invalidBodies = [
-        { hotelName: "Hotel", rooms: [] },
-        {
-          hotelName: "Hotel",
-          rooms: [
-            { roomType: "TRIPLE", quantity: 1 },
-            { roomType: "TRIPLE", quantity: 2 },
-          ],
-        },
-        { hotelName: "Hotel", rooms: [{ roomType: "TRIPLE", quantity: 0 }] },
-        { hotelName: "Hotel", rooms: [{ roomType: "TRIPLE", quantity: 51 }] },
-        { hotelName: "   ", rooms: [{ roomType: "TRIPLE", quantity: 1 }] },
-        { hotelName: "Hotel", rooms: [{ roomType: "SUITE", quantity: 1 }] },
-      ];
-      for (const body of invalidBodies) {
-        const res = await postRooms(body);
-        assert.equal(res.statusCode, 400, JSON.stringify(body));
-      }
-      assert.equal(fake.transaction.mock.callCount(), 0);
-    });
-
-    it("tope de 200: 4 tipos × 50 (justo el tope) es válido", () => {
-      const result = createLodgingRoomsBodySchema.safeParse({
-        hotelName: "Hotel",
-        rooms: [
-          { roomType: "MATRIMONIAL", quantity: 50 },
-          { roomType: "DOUBLE_INDIVIDUAL", quantity: 50 },
-          { roomType: "TRIPLE", quantity: 50 },
-          { roomType: "QUADRUPLE", quantity: 50 },
-        ],
-      });
-      assert.equal(result.success, true);
-    });
-
-    it("crea habitaciones SINGLE con capacidad 1 del servidor, junto con los otros 4 tipos", async () => {
+    it("formato anterior { roomType, quantity }: se traduce a las camas del tipo", async () => {
       createFakeLodgingDb({ tours: [tour(TOUR_ID)] });
       const res = await postRooms({
         hotelName: "Hotel Individual",
@@ -566,35 +631,58 @@ describe("Hospedaje del tour: /api/lodging", () => {
       const { data } = res.json();
       assert.equal(data.createdRooms, 6);
       assert.equal(data.createdCapacity, 1 + 1 + 2 + 2 + 3 + 4);
-      assert.deepEqual(
-        data.hotel.rooms.slice(0, 2).map((r: Row) => [r.roomType, r.capacity]),
-        [
-          ["SINGLE", LODGING_ROOM_CAPACITY.SINGLE],
-          ["SINGLE", 1],
-        ],
-      );
+      assert.deepEqual(data.hotel.rooms.map(roomSummary), [
+        ["SINGLE", 0, 1, 1],
+        ["SINGLE", 0, 1, 1],
+        ["MATRIMONIAL", 1, 0, 2],
+        ["DOUBLE_INDIVIDUAL", 0, 2, 2],
+        ["TRIPLE", 1, 1, 3],
+        ["QUADRUPLE", 2, 0, 4],
+      ]);
     });
 
-    it("con 5 tipos el tope de 200 por envío se sigue aplicando", () => {
-      const rooms = ["SINGLE", "MATRIMONIAL", "DOUBLE_INDIVIDUAL", "TRIPLE", "QUADRUPLE"];
+    it("400 por body inválido sin abrir la transacción", async () => {
+      const fake = createFakeLodgingDb({ tours: [tour(TOUR_ID)] });
+      const invalidBodies = [
+        { hotelName: "Hotel", rooms: [] },
+        { hotelName: "Hotel", rooms: [beds(0, 0)] }, // sin camas
+        { hotelName: "Hotel", rooms: [beds(3, 0)] }, // más de 2 matrimoniales
+        { hotelName: "Hotel", rooms: [beds(0, 5)] }, // más de 4 individuales
+        { hotelName: "Hotel", rooms: [beds(2, 3)] }, // 7 personas
+        { hotelName: "Hotel", rooms: [beds(-1, 2)] },
+        { hotelName: "Hotel", rooms: [beds(1.5, 0)] },
+        { hotelName: "Hotel", rooms: [{ matrimonialBeds: 1, quantity: 1 }] }, // falta singleBeds
+        { hotelName: "Hotel", rooms: Array.from({ length: 21 }, () => beds(1, 0)) },
+        { hotelName: "Hotel", rooms: [beds(1, 0, 0)] },
+        { hotelName: "Hotel", rooms: [beds(1, 0, 51)] },
+        { hotelName: "   ", rooms: [beds(1, 0)] },
+        { hotelName: "Hotel", rooms: [{ roomType: "SUITE", quantity: 1 }] },
+        { hotelName: "Hotel", rooms: [{ roomType: "TRIPLE", quantity: 0 }] },
+      ];
+      for (const body of invalidBodies) {
+        const res = await postRooms(body);
+        assert.equal(res.statusCode, 400, JSON.stringify(body));
+      }
+      assert.equal(fake.transaction.mock.callCount(), 0);
+    });
+
+    it("tope de 200 habitaciones por envío (4 × 50 válido; 5 × 50 no)", () => {
+      const configs = [beds(1, 0), beds(0, 2), beds(1, 1), beds(2, 0), beds(0, 1)];
       const atLimit = createLodgingRoomsBodySchema.safeParse({
         hotelName: "Hotel",
-        rooms: rooms.map((roomType) => ({ roomType, quantity: 40 })),
+        rooms: configs.slice(0, 4).map((config) => ({ ...config, quantity: 50 })),
       });
       assert.equal(atLimit.success, true);
       const overLimit = createLodgingRoomsBodySchema.safeParse({
         hotelName: "Hotel",
-        rooms: rooms.map((roomType) => ({ roomType, quantity: 50 })),
+        rooms: configs.map((config) => ({ ...config, quantity: 50 })),
       });
       assert.equal(overLimit.success, false);
     });
 
     it("tour ajeno → 404 sin escribir", async () => {
       const fake = createFakeLodgingDb({ tours: [tour(TOUR_ID)] });
-      const res = await postRooms(
-        { hotelName: "Hotel", rooms: [{ roomType: "TRIPLE", quantity: 1 }] },
-        AGENCY_B,
-      );
+      const res = await postRooms({ hotelName: "Hotel", rooms: [beds(1, 1)] }, AGENCY_B);
       assert.equal(res.statusCode, 404);
       assert.equal(writesOf(fake).length, 0);
     });
@@ -604,11 +692,7 @@ describe("Hospedaje del tour: /api/lodging", () => {
       try {
         const fake = createFakeLodgingDb(baseTables());
         for (const [method, url, payload] of [
-          [
-            "POST",
-            `/api/lodging/${TOUR_ID}/rooms`,
-            { hotelName: "H", rooms: [{ roomType: "TRIPLE", quantity: 1 }] },
-          ],
+          ["POST", `/api/lodging/${TOUR_ID}/rooms`, { hotelName: "H", rooms: [beds(1, 1)] }],
           ["PATCH", roomUrl(ROOM_MAT), { status: "CONFIRMED" }],
           [
             "POST",
@@ -743,11 +827,36 @@ describe("Hospedaje del tour: /api/lodging", () => {
           { slotIndex: 1, bookingPassengerId: P_SOLO },
           { slotIndex: 2, bookingPassengerId: P_SOLO },
         ],
-        [1, 2, 3, 4, 5].map((n) => ({ slotIndex: n, bookingPassengerId: uuid("d", 10 + n) })),
+        [{ slotIndex: 7, bookingPassengerId: P_SOLO }], // ninguna habitación pasa de 6 lugares
+        [1, 2, 3, 4, 5, 6, 7].map((n) => ({
+          slotIndex: n,
+          bookingPassengerId: uuid("d", 10 + n),
+        })),
       ]) {
         const invalid = await assign(ROOM_TRIPLE_H2, assignments);
         assert.equal(invalid.statusCode, 400, JSON.stringify(assignments));
       }
+    });
+
+    it("habitación para 6 (2 matrimoniales + 2 individuales): asigna en los lugares 5 y 6", async () => {
+      const SIX = uuid("c", 8);
+      createFakeLodgingDb(
+        baseTables({
+          tour_hotel_rooms: [
+            room(SIX, HOTEL_2, { roomType: null, matrimonialBeds: 2, singleBeds: 2, capacity: 6 }),
+          ],
+        }),
+      );
+      const res = await assign(SIX, [
+        { slotIndex: 5, bookingPassengerId: P_TITULAR },
+        { slotIndex: 6, bookingPassengerId: P_SOLO },
+      ]);
+      assert.equal(res.statusCode, 201);
+      assert.deepEqual(res.json().data.room.slots, [
+        { slotIndex: 5, bookingPassengerId: P_TITULAR },
+        { slotIndex: 6, bookingPassengerId: P_SOLO },
+      ]);
+      assert.equal(res.json().data.room.roomType, null);
     });
 
     it("404: pasajero dado de baja, de reserva cancelada o borrada, de otro tour o inexistente", async () => {
@@ -907,7 +1016,7 @@ describe("Hospedaje del tour: /api/lodging", () => {
       assert.equal((await deleteRoom(ROOM_DOUBLE)).statusCode, 200);
       const res = await postRooms({
         hotelName: "Hotel Real",
-        rooms: [{ roomType: "TRIPLE", quantity: 1 }],
+        rooms: [beds(1, 1)],
       });
       assert.equal(res.statusCode, 201);
       const created = fake.tables.tour_hotel_rooms.find(
@@ -930,136 +1039,127 @@ describe("Hospedaje del tour: /api/lodging", () => {
 
   describe("DELETE /lodging/:tourId/rooms/:roomId/beds/:slotIndex", () => {
     const QUAD = uuid("c", 6);
-    const quadTables = (assignments: Row[]) =>
+    const SIX = uuid("c", 7); // 2 matrimoniales (lugares 1-2 y 3-4) + 2 individuales (5 y 6)
+    const bedTables = (assignments: Row[]) =>
       baseTables({
         tour_hotel_rooms: [
           ...(baseTables().tour_hotel_rooms ?? []),
-          room(QUAD, HOTEL_2, { roomType: "QUADRUPLE", capacity: 4, position: 2 }),
+          room(QUAD, HOTEL_2, { roomType: "QUADRUPLE", position: 2 }),
+          room(SIX, HOTEL_2, {
+            roomType: null,
+            matrimonialBeds: 2,
+            singleBeds: 2,
+            capacity: 6,
+            position: 3,
+          }),
         ],
         tour_hotel_room_assignments: assignments,
       });
+    const storedRoom = (fake: { tables: LodgingTables }, id: string) =>
+      fake.tables.tour_hotel_rooms.find((r) => r.id === id)!;
+    const storedSlots = (fake: { tables: LodgingTables }, id: string) =>
+      fake.tables.tour_hotel_room_assignments
+        .filter((a) => a.roomId === id)
+        .map((a) => [a.slotIndex, a.bookingPassengerId])
+        .sort((a, b) => Number(a[0]) - Number(b[0]));
 
-    it("cama libre del medio: recorre las siguientes conservando a sus pasajeros", async () => {
+    it("cama matrimonial: quita sus 2 lugares, libera a sus pasajeros y recorre los siguientes", async () => {
       const fake = createFakeLodgingDb(
-        quadTables([
-          assignment(QUAD, HOTEL_2, 1, P_TITULAR),
-          assignment(QUAD, HOTEL_2, 3, P_COMPANION),
-          assignment(QUAD, HOTEL_2, 4, P_SOLO),
+        bedTables([
+          assignment(SIX, HOTEL_2, 1, P_TITULAR),
+          assignment(SIX, HOTEL_2, 2, P_COMPANION),
+          assignment(SIX, HOTEL_2, 4, P_SOLO),
+          assignment(SIX, HOTEL_2, 5, P_DROPPED), // no vigente: también se recorre
         ]),
       );
-      const res = await deleteBed(QUAD, 2);
+      const res = await deleteBed(SIX, 2); // el lugar 2 es de la matrimonial 1 (lugares 1 y 2)
       assert.equal(res.statusCode, 200);
-      const { room: updated, releasedPassenger } = res.json().data;
-      assert.equal(releasedPassenger, false);
-      assert.equal(updated.capacity, 3);
-      assert.equal(updated.roomType, "TRIPLE"); // Cuádruple con 3 lugares → Triple
-      assert.deepEqual(updated.slots, [
-        { slotIndex: 1, bookingPassengerId: P_TITULAR },
-        { slotIndex: 2, bookingPassengerId: P_COMPANION },
-        { slotIndex: 3, bookingPassengerId: P_SOLO },
+      const { room: updated, releasedPassenger, releasedPassengers } = res.json().data;
+      assert.equal(releasedPassenger, true);
+      assert.equal(releasedPassengers, 2);
+      assert.deepEqual(
+        [updated.matrimonialBeds, updated.singleBeds, updated.capacity, updated.roomType],
+        [1, 2, 4, null],
+      );
+      assert.deepEqual(updated.slots, [{ slotIndex: 2, bookingPassengerId: P_SOLO }]);
+      assert.deepEqual(storedSlots(fake, SIX), [
+        [2, P_SOLO],
+        [3, P_DROPPED],
       ]);
-      const stored = fake.tables.tour_hotel_rooms.find((r) => r.id === QUAD)!;
-      assert.equal(stored.capacity, 3);
-      assert.equal(stored.roomType, "TRIPLE");
+      const stored = storedRoom(fake, SIX);
+      assert.deepEqual(
+        [stored.matrimonialBeds, stored.singleBeds, stored.capacity, stored.roomType],
+        [1, 2, 4, null],
+      );
       assert.equal(typeof stored.updatedAt, "string");
     });
 
-    it("cama ocupada: libera al pasajero (releasedPassenger) y recorre la siguiente", async () => {
+    it("segunda cama matrimonial: los lugares anteriores no se mueven", async () => {
       const fake = createFakeLodgingDb(
-        baseTables({
-          tour_hotel_room_assignments: [
-            assignment(ROOM_TRIPLE_H2, HOTEL_2, 1, P_TITULAR),
-            assignment(ROOM_TRIPLE_H2, HOTEL_2, 2, P_COMPANION),
-          ],
-        }),
+        bedTables([
+          assignment(SIX, HOTEL_2, 1, P_TITULAR),
+          assignment(SIX, HOTEL_2, 3, P_COMPANION),
+          assignment(SIX, HOTEL_2, 6, P_SOLO),
+        ]),
       );
-      const res = await deleteBed(ROOM_TRIPLE_H2, 1);
+      const res = await deleteBed(SIX, 3);
       assert.equal(res.statusCode, 200);
-      assert.equal(res.json().data.releasedPassenger, true);
-      assert.equal(res.json().data.room.capacity, 2);
+      assert.equal(res.json().data.releasedPassengers, 1);
       assert.deepEqual(res.json().data.room.slots, [
-        { slotIndex: 1, bookingPassengerId: P_COMPANION },
+        { slotIndex: 1, bookingPassengerId: P_TITULAR },
+        { slotIndex: 4, bookingPassengerId: P_SOLO },
       ]);
-      const lodging = (await getLodging()).json().data;
-      assert.equal(lodging.totalCapacity, 2 + 2 + 2 + 2);
-      assert.equal(fake.tables.tour_hotel_room_assignments.length, 1);
+      assert.deepEqual(storedSlots(fake, SIX), [
+        [1, P_TITULAR],
+        [4, P_SOLO],
+      ]);
     });
 
-    it("cama con una asignación NO vigente: la borra y releasedPassenger es false", async () => {
+    it("cama individual: quita 1 lugar y recorre la siguiente", async () => {
+      const fake = createFakeLodgingDb(
+        bedTables([assignment(SIX, HOTEL_2, 5, P_TITULAR), assignment(SIX, HOTEL_2, 6, P_SOLO)]),
+      );
+      const res = await deleteBed(SIX, 5);
+      assert.equal(res.statusCode, 200);
+      const { room: updated, releasedPassenger, releasedPassengers } = res.json().data;
+      assert.equal(releasedPassenger, true);
+      assert.equal(releasedPassengers, 1);
+      assert.deepEqual([updated.matrimonialBeds, updated.singleBeds, updated.capacity], [2, 1, 5]);
+      assert.deepEqual(updated.slots, [{ slotIndex: 5, bookingPassengerId: P_SOLO }]);
+      assert.deepEqual(storedSlots(fake, SIX), [[5, P_SOLO]]);
+    });
+
+    it("cama con una asignación NO vigente: la borra y no cuenta como liberada", async () => {
       const fake = createFakeLodgingDb(
         baseTables({
-          tour_hotel_room_assignments: [assignment(ROOM_TRIPLE_H2, HOTEL_2, 2, P_DROPPED)],
-        }),
-      );
-      const res = await deleteBed(ROOM_TRIPLE_H2, 2);
-      assert.equal(res.statusCode, 200);
-      assert.equal(res.json().data.releasedPassenger, false);
-      assert.equal(fake.tables.tour_hotel_room_assignments.length, 0);
-    });
-
-    it("última cama: baja la capacidad sin recorrer a nadie", async () => {
-      createFakeLodgingDb(
-        baseTables({
-          tour_hotel_room_assignments: [
-            assignment(ROOM_TRIPLE_H2, HOTEL_2, 1, P_TITULAR),
-            assignment(ROOM_TRIPLE_H2, HOTEL_2, 3, P_SOLO),
-          ],
+          tour_hotel_room_assignments: [assignment(ROOM_TRIPLE_H2, HOTEL_2, 3, P_DROPPED)],
         }),
       );
       const res = await deleteBed(ROOM_TRIPLE_H2, 3);
       assert.equal(res.statusCode, 200);
-      assert.equal(res.json().data.releasedPassenger, true);
-      assert.equal(res.json().data.room.capacity, 2);
-      assert.deepEqual(res.json().data.room.slots, [
-        { slotIndex: 1, bookingPassengerId: P_TITULAR },
-      ]);
+      assert.equal(res.json().data.releasedPassenger, false);
+      assert.equal(res.json().data.releasedPassengers, 0);
+      assert.equal(fake.tables.tour_hotel_room_assignments.length, 0);
     });
 
-    it("habitación de un solo lugar → 409 sin escribir", async () => {
-      const fake = createFakeLodgingDb(
-        baseTables({
-          tour_hotel_rooms: [room(ROOM_MAT, HOTEL_1, { capacity: 1 })],
-        }),
-      );
-      const res = await deleteBed(ROOM_MAT, 1);
-      assert.equal(res.statusCode, 409);
-      assert.equal(
-        res.json().error,
-        "La habitación solo tiene un lugar: elimina la habitación completa.",
-      );
-      assert.equal(writesOf(fake).length, 0);
-    });
-
-    it("slotIndex inválido → 400; mayor a la capacidad → 404; habitación ajena → 404", async () => {
-      const fake = createFakeLodgingDb(baseTables());
-      for (const slot of [0, -1, "1.5", "cero"]) {
-        assert.equal((await deleteBed(ROOM_MAT, slot)).statusCode, 400, String(slot));
-      }
-      const outOfRange = await deleteBed(ROOM_MAT, 3);
-      assert.equal(outOfRange.statusCode, 404);
-      assert.equal(outOfRange.json().error, "Cama no encontrada");
-      assert.equal((await deleteBed(ROOM_OTHER_TOUR, 1)).statusCode, 404);
-      assert.equal((await deleteBed(ROOM_MAT, 1, AGENCY_A, OTHER_TOUR_ID)).statusCode, 404);
-      assert.equal((await deleteBed(ROOM_MAT, 1, AGENCY_B)).statusCode, 404);
-      assert.equal(writesOf(fake).length, 0);
-    });
-
-    it("cambia el tipo según la nueva capacidad y el GET posterior lo refleja", async () => {
-      const fake = createFakeLodgingDb(quadTables([]));
-      const cases: [string, number, string, number][] = [
-        [ROOM_MAT, 1, "SINGLE", 1], // Matrimonial 2 → 1
-        [ROOM_DOUBLE, 2, "SINGLE", 1], // Doble Individual 2 → 1
-        [ROOM_TRIPLE_H2, 3, "DOUBLE_INDIVIDUAL", 2], // Triple 3 → 2 (no se asume pareja)
-        [QUAD, 4, "TRIPLE", 3], // Cuádruple 4 → 3
-        [QUAD, 3, "DOUBLE_INDIVIDUAL", 2], // y luego 3 → 2
+    it("ajusta el tipo heredado a las camas que quedan y el GET posterior lo refleja", async () => {
+      const fake = createFakeLodgingDb(bedTables([]));
+      const cases: [string, number, string | null, number, number][] = [
+        [QUAD, 4, "MATRIMONIAL", 1, 0], // Cuádruple (2 matrimoniales) → 1 matrimonial
+        [ROOM_TRIPLE_H2, 3, "MATRIMONIAL", 1, 0], // Triple sin su individual → 1 matrimonial
+        [ROOM_DOUBLE, 2, "SINGLE", 0, 1], // Doble Individual → 1 individual
+        [SIX, 1, null, 1, 2], // 2+2 → 1 matrimonial + 2 individuales
+        [SIX, 1, "DOUBLE_INDIVIDUAL", 0, 2], // → 2 individuales: nunca matrimonial
       ];
-      for (const [roomId, slot, roomType, capacity] of cases) {
+      for (const [roomId, slot, roomType, matrimonialBeds, singleBeds] of cases) {
         const res = await deleteBed(roomId, slot);
-        assert.equal(res.statusCode, 200, `${roomId} cama ${slot}`);
-        assert.equal(res.json().data.room.roomType, roomType);
-        assert.equal(res.json().data.room.capacity, capacity);
-        const stored = fake.tables.tour_hotel_rooms.find((r) => r.id === roomId)!;
-        assert.equal(stored.roomType, roomType);
+        assert.equal(res.statusCode, 200, `${roomId} lugar ${slot}`);
+        const updated = res.json().data.room;
+        assert.deepEqual(
+          [updated.roomType, updated.matrimonialBeds, updated.singleBeds, updated.capacity],
+          [roomType, matrimonialBeds, singleBeds, 2 * matrimonialBeds + singleBeds],
+        );
+        assert.equal(storedRoom(fake, roomId).roomType, roomType);
       }
 
       const rooms = new Map<string, Row>(
@@ -1069,26 +1169,65 @@ describe("Hospedaje del tour: /api/lodging", () => {
           .map((r: Row) => [r.id, r]),
       );
       assert.deepEqual(
-        [ROOM_MAT, ROOM_DOUBLE, ROOM_TRIPLE_H2, QUAD, ROOM_MAT_2].map((id) => [
-          rooms.get(id)?.roomType,
-          rooms.get(id)?.capacity,
-        ]),
+        [QUAD, ROOM_TRIPLE_H2, ROOM_DOUBLE, SIX, ROOM_MAT].map((id) => {
+          const r = rooms.get(id)!;
+          return [r.roomType, r.matrimonialBeds, r.singleBeds, r.capacity];
+        }),
         [
-          ["SINGLE", 1],
-          ["SINGLE", 1],
-          ["DOUBLE_INDIVIDUAL", 2],
-          ["DOUBLE_INDIVIDUAL", 2],
-          ["MATRIMONIAL", 2], // sin cambios
+          ["MATRIMONIAL", 1, 0, 2],
+          ["MATRIMONIAL", 1, 0, 2],
+          ["SINGLE", 0, 1, 1],
+          ["DOUBLE_INDIVIDUAL", 0, 2, 2],
+          ["MATRIMONIAL", 1, 0, 2], // sin cambios
         ],
       );
     });
 
+    it("habitación con una sola cama (matrimonial o individual) → 409 sin escribir", async () => {
+      const SINGLE_ROOM = uuid("c", 9);
+      const fake = createFakeLodgingDb(
+        baseTables({
+          tour_hotel_rooms: [
+            room(ROOM_MAT, HOTEL_1),
+            room(SINGLE_ROOM, HOTEL_1, { roomType: "SINGLE", position: 2 }),
+          ],
+        }),
+      );
+      for (const [roomId, slot] of [
+        [ROOM_MAT, 1],
+        [ROOM_MAT, 2],
+        [SINGLE_ROOM, 1],
+      ] as const) {
+        const res = await deleteBed(roomId, slot);
+        assert.equal(res.statusCode, 409, `${roomId} lugar ${slot}`);
+        assert.equal(
+          res.json().error,
+          "La habitación solo tiene una cama: elimina la habitación completa.",
+        );
+      }
+      assert.equal(writesOf(fake).length, 0);
+    });
+
+    it("slotIndex inválido → 400; mayor a la capacidad → 404; habitación ajena → 404", async () => {
+      const fake = createFakeLodgingDb(baseTables());
+      for (const slot of [0, -1, "1.5", "cero"]) {
+        assert.equal((await deleteBed(ROOM_MAT, slot)).statusCode, 400, String(slot));
+      }
+      const outOfRange = await deleteBed(ROOM_TRIPLE_H2, 4);
+      assert.equal(outOfRange.statusCode, 404);
+      assert.equal(outOfRange.json().error, "Cama no encontrada");
+      assert.equal((await deleteBed(ROOM_OTHER_TOUR, 1)).statusCode, 404);
+      assert.equal((await deleteBed(ROOM_MAT, 1, AGENCY_A, OTHER_TOUR_ID)).statusCode, 404);
+      assert.equal((await deleteBed(ROOM_MAT, 1, AGENCY_B)).statusCode, 404);
+      assert.equal(writesOf(fake).length, 0);
+    });
+
     it("asignar después respeta la nueva capacidad", async () => {
       createFakeLodgingDb(baseTables());
-      assert.equal((await deleteBed(ROOM_TRIPLE_H2, 2)).statusCode, 200);
-      const beyond = await assign(ROOM_TRIPLE_H2, [{ slotIndex: 3, bookingPassengerId: P_SOLO }]);
+      assert.equal((await deleteBed(ROOM_TRIPLE_H2, 1)).statusCode, 200); // queda 1 individual
+      const beyond = await assign(ROOM_TRIPLE_H2, [{ slotIndex: 2, bookingPassengerId: P_SOLO }]);
       assert.equal(beyond.statusCode, 400);
-      const inside = await assign(ROOM_TRIPLE_H2, [{ slotIndex: 2, bookingPassengerId: P_SOLO }]);
+      const inside = await assign(ROOM_TRIPLE_H2, [{ slotIndex: 1, bookingPassengerId: P_SOLO }]);
       assert.equal(inside.statusCode, 201);
     });
   });
@@ -1104,7 +1243,7 @@ describe("Hospedaje del tour: /api/lodging", () => {
       });
       const fake = createFakeLodgingDb(tables);
       const responses = [
-        await postRooms({ hotelName: "Hotel", rooms: [{ roomType: "TRIPLE", quantity: 1 }] }),
+        await postRooms({ hotelName: "Hotel", rooms: [beds(1, 1)] }),
         await patchRoom(ROOM_MAT, { roomNumber: "300", status: "CONFIRMED" }),
         await assign(ROOM_DOUBLE, [{ slotIndex: 1, bookingPassengerId: P_SOLO }]),
         await unassign(ROOM_MAT, 1),

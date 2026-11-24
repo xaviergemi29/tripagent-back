@@ -34,12 +34,18 @@ export interface BoardingTour {
   boardingPoints: { id: string; time: string; location: string }[] | null;
 }
 
-/** Habitación de un pasajero en un hotel del tour (el front arma "Hab. 101" o "Matrimonial #1"). */
+/**
+ * Habitación de un pasajero en un hotel del tour (el front arma "Hab. 101" o "1 matrimonial #1").
+ * Sin ids (regla 26).
+ */
 export interface BoardingRoom {
   hotelName: string;
   roomNumber: string | null;
-  roomType: string;
-  /** Orden de la habitación entre las de su tipo en ese hotel (para "Matrimonial #2"). */
+  /** Tipo heredado (puede ser null: las camas definen la habitación). */
+  roomType: string | null;
+  matrimonialBeds: number;
+  singleBeds: number;
+  /** Orden de la habitación entre las de su misma configuración de camas en ese hotel. */
   typeIndex: number;
 }
 
@@ -120,6 +126,8 @@ export class BoardingService {
           hotelName: tourHotels.name,
           roomNumber: tourHotelRooms.roomNumber,
           roomType: tourHotelRooms.roomType,
+          matrimonialBeds: tourHotelRooms.matrimonialBeds,
+          singleBeds: tourHotelRooms.singleBeds,
         })
         .from(tourHotelRooms)
         .innerJoin(tourHotels, eq(tourHotelRooms.hotelId, tourHotels.id))
@@ -148,17 +156,20 @@ export class BoardingService {
           )
       : [];
 
-    // "Matrimonial #2": orden de la habitación entre las de su tipo dentro de su hotel.
+    // "#2": orden de la habitación entre las de su misma configuración de camas (matrimoniales e
+    // individuales) dentro de su hotel, por `position`.
     const roomById = new Map<string, BoardingRoom>();
     const typeCounter = new Map<string, number>();
     for (const room of rooms) {
-      const counterKey = `${room.hotelId}:${room.roomType}`;
+      const counterKey = `${room.hotelId}:${room.matrimonialBeds}:${room.singleBeds}`;
       const typeIndex = (typeCounter.get(counterKey) ?? 0) + 1;
       typeCounter.set(counterKey, typeIndex);
       roomById.set(room.roomId, {
         hotelName: room.hotelName,
         roomNumber: room.roomNumber,
         roomType: room.roomType,
+        matrimonialBeds: room.matrimonialBeds,
+        singleBeds: room.singleBeds,
         typeIndex,
       });
     }

@@ -309,6 +309,13 @@
       "when": 1795478137110,
       "tag": "0043_dazzling_shotgun",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1795495068472,
+      "tag": "0044_bitter_caretaker",
+      "breakpoints": true
     }
   ]
 }

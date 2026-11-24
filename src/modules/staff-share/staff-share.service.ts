@@ -174,12 +174,16 @@ export class StaffShareService {
       seatRightStatus: row.hasSeatRight
         ? SEAT_RIGHT_STATUS.CONFIRMED
         : SEAT_RIGHT_STATUS.PENDING_DEPOSIT,
-      rooms: row.rooms.map(({ hotelName, roomNumber, roomType, typeIndex }) => ({
-        hotelName,
-        roomNumber,
-        roomType,
-        typeIndex,
-      })),
+      rooms: row.rooms.map(
+        ({ hotelName, roomNumber, roomType, matrimonialBeds, singleBeds, typeIndex }) => ({
+          hotelName,
+          roomNumber,
+          roomType,
+          matrimonialBeds,
+          singleBeds,
+          typeIndex,
+        }),
+      ),
       boardedAt: row.boardedAt,
       isMinor: row.isMinor,
     }));

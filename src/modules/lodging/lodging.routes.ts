@@ -125,7 +125,7 @@ export async function lodgingRoutes(app: FastifyInstance) {
     },
   );
 
-  // Elimina una cama: recorre las siguientes y baja la capacidad. Un solo lugar → 409.
+  // Elimina la cama completa del lugar (matrimonial = 2 lugares) y recorre los siguientes. Última cama → 409.
   server.delete(
     "/:tourId/rooms/:roomId/beds/:slotIndex",
     { onRequest: [app.authenticate], schema: { params: lodgingSlotParamsSchema } },

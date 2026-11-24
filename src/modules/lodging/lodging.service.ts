@@ -11,7 +11,6 @@ import {
   travelers,
 } from "../../db/schema.js";
 import {
-  LODGING_ROOM_CAPACITY,
   LODGING_ROOM_STATUS,
   type LodgingRoomStatus,
   type LodgingRoomType,
@@ -21,7 +20,13 @@ import {
   ConflictError,
   NotFoundError,
 } from "../../shared/errors/domain-errors.js";
-import { resolveRoomTypeForCapacity } from "../../shared/utils/lodging-room.util.js";
+import {
+  getBedOfSlot,
+  getRoomCapacity,
+  legacyRoomTypeForBeds,
+  withoutBed,
+  type RoomBeds,
+} from "../../shared/utils/lodging-room.util.js";
 import { assertTourNotInAuditMode } from "../../shared/utils/tour-audit-mode.util.js";
 import type {
   AssignLodgingSlotsBody,
@@ -34,7 +39,7 @@ const ROOM_NOT_FOUND = "Habitación no encontrada";
 const PASSENGER_NOT_FOUND = "Pasajero no encontrado";
 const SLOT_EMPTY = "No hay un pasajero asignado en esa cama";
 const BED_NOT_FOUND = "Cama no encontrada";
-const LAST_BED = "La habitación solo tiene un lugar: elimina la habitación completa.";
+const LAST_BED = "La habitación solo tiene una cama: elimina la habitación completa.";
 export const ROOM_NUMBER_IN_USE = "Ese número de cuarto ya está en uso en este hotel";
 const SLOT_TAKEN = "Esa cama ya está ocupada";
 const PASSENGER_ALREADY_HOUSED = "Ese pasajero ya tiene cama en este hotel";
@@ -46,7 +51,10 @@ export interface LodgingSlot {
 
 export interface LodgingRoom {
   id: string;
-  roomType: LodgingRoomType;
+  /** Tipo heredado: el de las 5 combinaciones conocidas de camas, o null. */
+  roomType: LodgingRoomType | null;
+  matrimonialBeds: number;
+  singleBeds: number;
   capacity: number;
   position: number;
   roomNumber: string | null;
@@ -78,6 +86,8 @@ const ROOM_COLUMNS = {
   id: tourHotelRooms.id,
   hotelId: tourHotelRooms.hotelId,
   roomType: tourHotelRooms.roomType,
+  matrimonialBeds: tourHotelRooms.matrimonialBeds,
+  singleBeds: tourHotelRooms.singleBeds,
   capacity: tourHotelRooms.capacity,
   position: tourHotelRooms.position,
   roomNumber: tourHotelRooms.roomNumber,
@@ -106,19 +116,32 @@ const sumCapacity = (rooms: readonly { capacity: number }[]): number =>
 /** Mismo hotel = mismo nombre sin mayúsculas ni espacios a los lados. */
 const normalizeHotelName = (name: string): string => name.trim().toLocaleLowerCase("es");
 
+export type PlannedRoom = RoomBeds & {
+  roomType: LodgingRoomType | null;
+  capacity: number;
+  position: number;
+};
+
 /**
- * Habitaciones a crear, en el orden del body, con la capacidad del tipo (nunca la del cliente) y la
- * posición continuando desde `startPosition`. Nacen sin número y CONSULTED.
+ * Habitaciones a crear, en el orden del body: capacidad derivada de las camas y tipo heredado
+ * (`legacyRoomTypeForBeds`), nunca del cliente; posición continuando desde `startPosition`. Nacen
+ * sin número y CONSULTED.
  */
 export function planRoomBatch(
   rooms: CreateLodgingRoomsBody["rooms"],
   startPosition: number,
-): { roomType: LodgingRoomType; capacity: number; position: number }[] {
-  const planned: { roomType: LodgingRoomType; capacity: number; position: number }[] = [];
+): PlannedRoom[] {
+  const planned: PlannedRoom[] = [];
   let position = startPosition;
-  for (const { roomType, quantity } of rooms) {
+  for (const { matrimonialBeds, singleBeds, quantity } of rooms) {
+    const beds = { matrimonialBeds, singleBeds };
     for (let i = 0; i < quantity; i += 1) {
-      planned.push({ roomType, capacity: LODGING_ROOM_CAPACITY[roomType], position });
+      planned.push({
+        roomType: legacyRoomTypeForBeds(beds),
+        ...beds,
+        capacity: getRoomCapacity(beds),
+        position,
+      });
       position += 1;
     }
   }
@@ -130,6 +153,8 @@ function toRoomView(room: RoomRow, slots: readonly SlotRow[]): LodgingRoom {
   return {
     id: room.id,
     roomType: room.roomType,
+    matrimonialBeds: room.matrimonialBeds,
+    singleBeds: room.singleBeds,
     capacity: room.capacity,
     position: room.position,
     roomNumber: room.roomNumber,
@@ -246,7 +271,7 @@ async function loadRoomView(
 }
 
 /**
- * Hospedaje del tour (regla 27): hoteles, habitaciones por tipo de cama y rooming list (qué pasajero
+ * Hospedaje del tour (regla 27): hoteles, habitaciones por camas y rooming list (qué pasajero
  * ocupa cada cama).
  */
 export class LodgingService {
@@ -608,30 +633,34 @@ export class LodgingService {
   }
 
   /**
-   * Elimina una cama: borra su asignación (vigente o no), recorre las camas siguientes un lugar
-   * hacia abajo conservando a sus pasajeros y baja la capacidad en 1. El tipo de habitación no
-   * cambia (la capacidad puede quedar por debajo de la del tipo). Cama fuera de la capacidad → 404;
-   * habitación de un solo lugar → 409 (se elimina la habitación completa).
+   * Elimina la cama COMPLETA que contiene el lugar `slotIndex` (`getBedOfSlot`): una matrimonial
+   * quita 2 lugares y una individual 1. Borra las asignaciones (vigentes o no) de esos lugares,
+   * recorre los lugares siguientes hacia abajo conservando a sus pasajeros y ajusta camas, capacidad
+   * y tipo heredado (`legacyRoomTypeForBeds`). Lugar fuera de la capacidad → 404; habitación que se
+   * quedaría sin camas → 409 (se elimina la habitación completa).
    */
   static async deleteBed(
     tourId: string,
     roomId: string,
     slotIndex: number,
     agencyId: string,
-  ): Promise<{ room: LodgingRoom; releasedPassenger: boolean }> {
+  ): Promise<{ room: LodgingRoom; releasedPassenger: boolean; releasedPassengers: number }> {
     return db.transaction(async (tx) => {
       await lockLodgingTour(tx, tourId, agencyId);
       const room = await findTourRoom(tx, tourId, roomId, agencyId);
-      if (slotIndex > room.capacity) throw new NotFoundError(BED_NOT_FOUND);
-      if (room.capacity <= 1) throw new ConflictError(LAST_BED);
+      const bed = getBedOfSlot(room, slotIndex);
+      if (!bed) throw new NotFoundError(BED_NOT_FOUND);
+      const beds = withoutBed(room, bed.kind);
+      if (beds.matrimonialBeds + beds.singleBeds === 0) throw new ConflictError(LAST_BED);
 
+      const bedSlots = new Set(bed.slots);
       const activeSlots = await fetchActiveSlots(
         tx,
         tourId,
         agencyId,
         eq(tourHotelRoomAssignments.roomId, room.id),
       );
-      const releasedPassenger = activeSlots.some((slot) => slot.slotIndex === slotIndex);
+      const releasedPassengers = activeSlots.filter((slot) => bedSlots.has(slot.slotIndex)).length;
 
       const roomScope = and(
         eq(tourHotelRoomAssignments.roomId, room.id),
@@ -639,21 +668,23 @@ export class LodgingService {
       );
       await tx
         .delete(tourHotelRoomAssignments)
-        .where(and(roomScope, eq(tourHotelRoomAssignments.slotIndex, slotIndex)));
+        .where(and(roomScope, inArray(tourHotelRoomAssignments.slotIndex, bed.slots)));
 
-      // Recorre las camas siguientes de una en una y en orden ascendente: cada fila baja a una cama
+      // Recorre los lugares siguientes de uno en uno y en orden ascendente: cada fila baja a un lugar
       // que ya quedó libre, así nunca choca con el índice único (roomId, slotIndex).
+      const lastBedSlot = Math.max(...bed.slots);
+      const shift = bed.slots.length;
       const roomAssignments = await tx
         .select({ id: tourHotelRoomAssignments.id, slotIndex: tourHotelRoomAssignments.slotIndex })
         .from(tourHotelRoomAssignments)
         .where(roomScope);
       const toShift = roomAssignments
-        .filter((row) => row.slotIndex > slotIndex)
+        .filter((row) => row.slotIndex > lastBedSlot)
         .sort((a, b) => a.slotIndex - b.slotIndex);
       for (const row of toShift) {
         await tx
           .update(tourHotelRoomAssignments)
-          .set({ slotIndex: row.slotIndex - 1 })
+          .set({ slotIndex: row.slotIndex - shift })
           .where(
             and(
               eq(tourHotelRoomAssignments.id, row.id),
@@ -662,17 +693,20 @@ export class LodgingService {
           );
       }
 
-      // La habitación pasa al tipo de su nueva capacidad (Matrimonial con 1 lugar → Individual).
-      const capacity = room.capacity - 1;
-      const roomType = resolveRoomTypeForCapacity(room.roomType, capacity);
+      const changes = {
+        ...beds,
+        capacity: getRoomCapacity(beds),
+        roomType: legacyRoomTypeForBeds(beds),
+      };
       await tx
         .update(tourHotelRooms)
-        .set({ capacity, roomType, updatedAt: new Date().toISOString() })
+        .set({ ...changes, updatedAt: new Date().toISOString() })
         .where(and(eq(tourHotelRooms.id, room.id), eq(tourHotelRooms.agencyId, agencyId)));
 
       return {
-        room: await loadRoomView(tx, { ...room, capacity, roomType }, tourId, agencyId),
-        releasedPassenger,
+        room: await loadRoomView(tx, { ...room, ...changes }, tourId, agencyId),
+        releasedPassenger: releasedPassengers > 0,
+        releasedPassengers,
       };
     });
   }

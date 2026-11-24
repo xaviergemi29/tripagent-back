@@ -69,7 +69,7 @@ export const PASSENGER_TYPE = pgEnum("passenger_type", ["ADULT", "CHILD"]);
 
 export const AGENCY_ROLES = pgEnum("agency_roles", ["ADMIN", "SALES", "GUIDE"]);
 
-// Tipo de habitación del hospedaje (regla 27); capacidad en LODGING_ROOM_CAPACITY.
+// Tipo heredado de habitación del hospedaje (regla 27); las camas definen la capacidad.
 export const LODGING_ROOM_TYPE = pgEnum("lodging_room_type", LODGING_ROOM_TYPES);
 // Estado de la habitación con el hotel (regla 27): consultada o confirmada.
 export const LODGING_ROOM_STATUS = pgEnum("lodging_room_status", LODGING_ROOM_STATUSES);
@@ -643,7 +643,7 @@ export const tourHotels = pgTable(
 );
 
 /**
- * Habitación de un hotel. `capacity` se copia de LODGING_ROOM_CAPACITY al crearla; `position` es el
+ * Habitación de un hotel. `capacity` se deriva de sus camas (`getRoomCapacity`); `position` es el
  * orden de alta dentro del hotel (1..n); `roomNumber` lo captura el operador (nulo = sin número).
  */
 export const tourHotelRooms = pgTable(
@@ -660,7 +660,11 @@ export const tourHotelRooms = pgTable(
       .references(() => tourHotels.id, { onDelete: "cascade" })
       .notNull(),
     roomNumber: varchar("room_number", { length: 10 }),
-    roomType: LODGING_ROOM_TYPE("room_type").notNull(),
+    // Dato heredado: el tipo de las 5 combinaciones de camas conocidas, o null (legacyRoomTypeForBeds).
+    roomType: LODGING_ROOM_TYPE("room_type"),
+    // Camas (regla 27): matrimonial = 2 lugares, individual = 1. capacity = 2·matrimoniales + individuales.
+    matrimonialBeds: integer("matrimonial_beds").notNull(),
+    singleBeds: integer("single_beds").notNull(),
     capacity: integer("capacity").notNull(),
     position: integer("position").notNull(),
     status: LODGING_ROOM_STATUS("status").default("CONSULTED").notNull(),

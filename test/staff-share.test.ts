@@ -127,14 +127,27 @@ const bookingRows = () => [
   },
 ];
 
-/** Simula la consulta pública evaluando el WHERE real (token, sin borrar, sin cancelar). */
-function mockPublicQueries(tourRow: Record<string, unknown> | null = publicTourRow()) {
+/**
+ * Simula la consulta pública evaluando el WHERE real (token, sin borrar, sin cancelar). Consultas:
+ * 1.ª bloqueos de staff, 2.ª habitaciones del hospedaje y 3.ª sus asignaciones (por defecto, sin
+ * hotel).
+ */
+function mockPublicQueries(
+  tourRow: Record<string, unknown> | null = publicTourRow(),
+  lodging: { rooms: Record<string, unknown>[]; assignments: Record<string, unknown>[] } = {
+    rooms: [],
+    assignments: [],
+  },
+) {
   const findFirst = mock.method(db.query.tours, "findFirst", (async (args: { where: SQL }) =>
     tourRow && rowMatches(args.where, tourRow) ? tourRow : undefined) as never);
-  // 1.ª consulta: bloqueos de staff; las demás (habitaciones del hospedaje): sin hotel.
+  const selectResults = [
+    [{ seatLabel: "3" }, { seatLabel: "11" }],
+    lodging.rooms,
+    lodging.assignments,
+  ];
   let selectCalls = 0;
-  mock.method(db, "select", (() =>
-    chain(selectCalls++ === 0 ? [{ seatLabel: "3" }, { seatLabel: "11" }] : [])) as never);
+  mock.method(db, "select", (() => chain(selectResults[selectCalls++] ?? [])) as never);
   mock.method(db.query.bookings, "findMany", (async () => bookingRows()) as never);
   return { findFirst };
 }
@@ -487,7 +500,20 @@ describe("Enlace de staff: ruta pública", () => {
   });
 
   it("privacidad (LFPDPPP): sin montos, contactos, fechas de nacimiento, ids ni magic tokens", async () => {
-    mockPublicQueries();
+    mockPublicQueries(publicTourRow(), {
+      rooms: [
+        {
+          roomId: "room-secret-id",
+          hotelId: "hotel-secret-id",
+          hotelName: "Hotel Sierra",
+          roomNumber: null,
+          roomType: null,
+          matrimonialBeds: 0,
+          singleBeds: 3,
+        },
+      ],
+      assignments: [{ roomId: "room-secret-id", bookingPassengerId: "bp-row-mariana" }],
+    });
 
     const res = await getPublic(VALID_TOKEN);
     const raw = res.body;
@@ -503,6 +529,20 @@ describe("Enlace de staff: ruta pública", () => {
       }
     };
     collectKeys(res.json());
+    // La habitación sale con sus camas, sin ids internos (regla 26).
+    const mariana = res
+      .json()
+      .data.passengers.find((p: { fullName: string }) => p.fullName === "Mariana Ruiz");
+    assert.deepEqual(mariana.rooms, [
+      {
+        hotelName: "Hotel Sierra",
+        roomNumber: null,
+        roomType: null,
+        matrimonialBeds: 0,
+        singleBeds: 3,
+        typeIndex: 1,
+      },
+    ]);
 
     const forbidden = [
       "id",
@@ -510,6 +550,8 @@ describe("Enlace de staff: ruta pública", () => {
       "travelerId",
       "bookingId",
       "bookingPassengerId",
+      "roomId",
+      "hotelId",
       "boardedByUserId",
       "price",
       "totalPrice",
@@ -537,6 +579,8 @@ describe("Enlace de staff: ruta pública", () => {
       "booking-1",
       "bp-row-mariana",
       "trav-mariana",
+      "room-secret-id",
+      "hotel-secret-id",
       TOUR_ID,
       AGENCY_A,
       VALID_TOKEN,
