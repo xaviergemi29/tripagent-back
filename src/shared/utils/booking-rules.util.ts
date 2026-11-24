@@ -50,6 +50,22 @@ export const calculateBookingStatus = ({
   return isDepositCovered(totalPaid, requiredDeposit) ? "CONFIRMED" : "PENDING";
 };
 
+/**
+ * Estado del formulario del grupo en el Centro de Control (`formStatus` del titular y de sus
+ * acompañantes). Se deriva de la RESERVA, no del viajero: un cliente frecuente que vuelve a apartar
+ * sigue en PENDING hasta registrarse en el Magic Link de esta reserva (reglas 4 y 11).
+ * Una reserva cancelada perdió su estado previo: cuenta como registrada si guardó la aceptación
+ * del aviso de privacidad (obligatoria en el registro desde la migración `0030`).
+ */
+export const getBookingFormStatus = (booking: {
+  status: BookingStatus;
+  privacyNoticeAcceptedAt: string | null;
+}): "PENDING" | "COMPLETED" => {
+  if (booking.status === "AWAITING_REGISTRATION") return "PENDING";
+  if (booking.status === "CANCELLED" && !booking.privacyNoticeAcceptedAt) return "PENDING";
+  return "COMPLETED";
+};
+
 /** Capacidad vendible del tour: capacidad total menos lugares de staff (regla 12). */
 export const getSellableCapacity = (maxCapacity: number, staffCapacity: number): number =>
   Math.max(0, Number(maxCapacity || 0) - Number(staffCapacity || 0));

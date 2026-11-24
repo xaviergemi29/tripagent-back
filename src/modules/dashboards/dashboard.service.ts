@@ -4,6 +4,7 @@ import { bookings, TOUR_MODALITIES, tours } from "../../db/schema.js";
 import { getTourTemporalStatus } from "../../shared/utils/tour-status.util.js";
 import { getVehicleCapacity } from "../../shared/utils/vehicle-layout.util.js";
 import {
+  getBookingFormStatus,
   getExpectedGroupSize,
   getRefundableSurplus,
   getRequiredDeposit,
@@ -56,7 +57,6 @@ export class DashboardService {
                 id: true,
                 fullName: true,
                 whatsappPhone: true,
-                emergencyContactPhone: true,
               },
             },
           },
@@ -178,7 +178,8 @@ export class DashboardService {
         });
       }
 
-      const isTitularFormPending = !titularRow.traveler.emergencyContactPhone;
+      // Del estado de la reserva, no del viajero (CRM compartido entre reservas).
+      const formStatus = getBookingFormStatus(booking);
       // Precio pactado por lugar (`bookings.unitPrice`; respaldo total ÷ lugares), el mismo que usan
       // las altas y bajas de lugares.
       const unitPrice = resolveAgreedUnitPrice({
@@ -197,7 +198,7 @@ export class DashboardService {
           role: PASSENGER_ROLE.COMPANION,
           fullName: comp.traveler.fullName,
           whatsapp: comp.traveler.whatsappPhone || "Sin teléfono",
-          formStatus: !comp.traveler.emergencyContactPhone ? "PENDING" : "COMPLETED",
+          formStatus,
           seatLabel: comp.seatLabel || null,
           boardingPoint: comp.boardingPoint || null,
           // Punto configurado del tour (ubicación y hora); misma regla que el manifiesto.
@@ -243,7 +244,7 @@ export class DashboardService {
         // de las 48 h, regla 13; el sistema no cancela nada).
         bookedAt: booking.createdAt,
 
-        formStatus: isTitularFormPending ? "PENDING" : "COMPLETED",
+        formStatus,
         seatLabel: titularRow.seatLabel || null,
         boardingPoint: titularRow.boardingPoint || null,
         boardingPointDetails: toBoardingPointDetails(titularRow.boardingPoint),

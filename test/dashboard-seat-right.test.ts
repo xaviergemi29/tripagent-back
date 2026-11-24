@@ -372,3 +372,97 @@ describe("Centro de Control: reservas canceladas por el cliente (filtro «Cancel
     assert.deepEqual(body.cancelledTravelers, []);
   });
 });
+
+describe("Centro de Control: `formStatus` se deriva de la reserva, no del viajero", () => {
+  let app: TestApp;
+  before(async () => {
+    app = await createTestApp();
+  });
+  after(async () => {
+    await app.close();
+  });
+  afterEach(() => mock.restoreAll());
+
+  const getDashboard = () =>
+    app.inject({
+      method: "GET",
+      url: `/api/dashboards/${TOUR_ID}`,
+      cookies: sessionCookie(app, AGENCY_A, USER_A),
+    });
+
+  /** Acompañante activo sin contacto de emergencia guardado en el CRM. */
+  const companionWithoutEmergency = (bookingId: string) => ({
+    isTitular: false,
+    status: "ACTIVE",
+    seatLabel: null,
+    boardingPoint: null,
+    traveler: {
+      id: `comp-${bookingId}`,
+      fullName: `Acompañante ${bookingId}`,
+      whatsappPhone: null,
+      emergencyContactPhone: null,
+    },
+  });
+
+  it("cliente frecuente (con contacto de emergencia) que vuelve a apartar → PENDING", async () => {
+    mock.method(db.query.tours, "findFirst", (async () => tourWithDeposit(500)) as never);
+    mockBookings([
+      { ...bookingPaid("b1", 0), status: "AWAITING_REGISTRATION", privacyNoticeAcceptedAt: null },
+    ]);
+
+    const body = (await getDashboard()).json();
+    const [titular] = body.travelers;
+    assert.equal(titular.formStatus, "PENDING");
+  });
+
+  for (const status of ["PENDING", "CONFIRMED"] as const) {
+    it(`reserva ${status} con titular y acompañante sin contacto de emergencia → COMPLETED`, async () => {
+      mock.method(db.query.tours, "findFirst", (async () => tourWithDeposit(500)) as never);
+      const booking = bookingPaid("b1", status === "CONFIRMED" ? 1000 : 0);
+      mockBookings([
+        {
+          ...booking,
+          status,
+          privacyNoticeAcceptedAt: "2026-11-20T10:00:00.000Z",
+          passengers: [
+            {
+              ...booking.passengers[0],
+              traveler: { ...booking.passengers[0]!.traveler, emergencyContactPhone: null },
+            },
+            companionWithoutEmergency("b1"),
+          ],
+        },
+      ]);
+
+      const body = (await getDashboard()).json();
+      const [titular] = body.travelers;
+      assert.equal(titular.formStatus, "COMPLETED");
+      assert.equal(titular.companions.length, 1);
+      assert.equal(titular.companions[0].formStatus, "COMPLETED");
+    });
+  }
+
+  it("reserva cancelada por el cliente: registrada si aceptó el aviso de privacidad", async () => {
+    mock.method(db.query.tours, "findFirst", (async () => tourWithDeposit(500)) as never);
+    const cancelled = (id: string, privacyNoticeAcceptedAt: string | null) => {
+      const booking = bookingPaid(id, 0);
+      return {
+        ...booking,
+        status: "CANCELLED",
+        privacyNoticeAcceptedAt,
+        passengers: booking.passengers.map((p) => ({ ...p, status: "CANCELLED" })),
+      };
+    };
+    mockBookings([cancelled("bc1", "2026-11-20T10:00:00.000Z"), cancelled("bc2", null)]);
+
+    const body = (await getDashboard()).json();
+    const byId = new Map(
+      body.cancelledTravelers.map((t: { bookingId: string; formStatus: string }) => [
+        t.bookingId,
+        t.formStatus,
+      ]),
+    );
+    assert.equal(byId.get("bc1"), "COMPLETED");
+    assert.equal(byId.get("bc2"), "PENDING");
+  });
+});

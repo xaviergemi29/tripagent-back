@@ -90,7 +90,7 @@ test/                 # fuera de src/ (tsc no las compila)
 
 ## Utilidades obligatorias (única fuente de verdad)
 
-- **Reglas de reserva** (`shared/utils/booking-rules.util.ts`): tamaño de grupo (`getExpectedGroupSize`), anticipo requerido, `isDepositCovered`, `calculateBookingStatus`, `getSellableCapacity`, `resolveAgreedUnitPrice` (precio pactado), `summarizeCompanionDrop`, `getRetainedPenaltyTotal`, `getRefundableSurplus`.
+- **Reglas de reserva** (`shared/utils/booking-rules.util.ts`): tamaño de grupo (`getExpectedGroupSize`), anticipo requerido, `isDepositCovered`, `calculateBookingStatus`, `getSellableCapacity`, `resolveAgreedUnitPrice` (precio pactado), `summarizeCompanionDrop`, `getRetainedPenaltyTotal`, `getRefundableSurplus`, `getBookingFormStatus` (`formStatus` del dashboard: de la reserva, nunca de los datos del viajero).
 - **Cupo:** `BookingCapacityService` (`getOccupiedSeats`, `assertSeatsAvailable`, `getSeatRightSeats`).
 - **Pago:** `derivePaymentStatus` (`payment-status.util.ts`). **Reembolsos:** `summarizeRefunds`, `isVoidEntry` (`refund.util.ts`). Montos en mensajes: `formatMoney` (`money.util.ts`).
 - **Tour:** `getTourTemporalStatus` / `getTourLastActiveDate` (`tour-status.util.ts`), `assertTourNotInAuditMode` (`tour-audit-mode.util.ts`). Fechas de negocio en CDMX: `mexico-date.util.ts` (`getTodayInMexico`, `isFutureDate`, `isPastDate`).
