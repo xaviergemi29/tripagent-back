@@ -77,4 +77,4 @@ Antes de dar cualquier tarea por finalizada:
    - `npx eslint .`
    - `npm run format:check`
 3. **Entrega clara:** Resume de forma concisa qué se modificó, qué invariantes o candados se respetaron y si algún cambio requiere actualización en `tripagent-front`.
-4. **Documentación:** en `CLAUDE.md` solo agrega o reemplaza la regla o el patrón vigente, en pocas líneas (sin "corregido el…", "antes…" ni conteos de pruebas). El detalle y el historial van a `../reporte-mvp.md` cuando el encargo lo pida; si no, indícalo en tu reporte.
+4. **Documentación:** en `CLAUDE.md` solo agrega o reemplaza la regla o el patrón vigente, en pocas líneas (sin "corregido el…", "antes…" ni conteos de pruebas). No edites `../reporte-mvp.md` (lo actualiza la sesión principal): al final de tu reporte incluye un bloque "Para reporte-mvp" con qué cambia para la agencia o el viajero, los RB / FLUJO afectados o nuevos, migraciones y si algo requiere decisión del PM.

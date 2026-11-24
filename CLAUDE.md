@@ -41,7 +41,7 @@ src/
 │   ├── storage/uploads.ts              # ★ única implementación de archivos
 │   └── utils/                          # reglas puras (ver "Utilidades obligatorias")
 └── modules/<dominio>/{<dominio>.routes.ts, .schema.ts, .service.ts}   # bookings usa singular (booking.*)
-drizzle/              # migraciones 0000…0041 (todas aplicadas en Neon); meta/ generado, no editar
+drizzle/              # migraciones 0000…0043 (todas aplicadas en Neon); meta/ generado, no editar
 public/uploads/{brochures,logos}/   # archivos subidos (en .gitignore)
 test/                 # fuera de src/ (tsc no las compila)
 ```
@@ -104,7 +104,7 @@ test/                 # fuera de src/ (tsc no las compila)
 
 ## Módulos (todos bajo `/api`)
 
-`auth` (login, register-agency, me, logout, change-password) · `agencies` (perfil, subscription, bank-account, policies, branding, logo) · `tours` (CRUD, brochure, vehicle, cancel, staff-share) · `tours-public` (`/tour-brochure/public/tours/:id`) · `bookings` (`/public/pre-booking`, `/bookings/public/register`, quick-booking, add-passenger, pending-slots, cancel-full, transfer) · `booking-passengers` (baja de acompañante) · `payments` (abono/reembolso, void) · `dashboards` (BFF del Centro de Control, objeto directo) · `tour-manifest` · `tour-seats` · `vehicles` (solo lectura) · `vehicle-templates` · `travelers` (listado, PATCH, DELETE = anonimizar, history) · `notifications` · `magic-tokens` (validate, lookup-traveler) · `staff-share` (`/public/staff-share/:token`) · `lodging` (hospedaje y rooming list: `GET /lodging/:tourId`, `POST /lodging/:tourId/rooms`, `PATCH /lodging/:tourId/rooms/:roomId`, `POST …/rooms/:roomId/assignments`, `DELETE …/rooms/:roomId/slots/:slotIndex`, `DELETE …/rooms/:roomId`, `DELETE …/rooms/:roomId/beds/:slotIndex`; regla 27).
+`auth` (login, register-agency, me, logout, change-password) · `agencies` (perfil, subscription, subscription/cancel y /reactivate (solo `ADMIN`; regla 20), bank-account, policies, branding, logo) · `tours` (CRUD, brochure, vehicle, cancel, staff-share) · `tours-public` (`/tour-brochure/public/tours/:id`) · `bookings` (`/public/pre-booking`, `/bookings/public/register`, quick-booking, add-passenger, pending-slots, cancel-full, transfer) · `booking-passengers` (baja de acompañante) · `payments` (abono/reembolso, void) · `dashboards` (BFF del Centro de Control, objeto directo) · `tour-manifest` · `tour-seats` · `vehicles` (solo lectura) · `vehicle-templates` · `travelers` (listado, PATCH, DELETE = anonimizar, history) · `notifications` · `magic-tokens` (validate, lookup-traveler) · `staff-share` (`/public/staff-share/:token`, y su pase de lista `…/boarding`) · `boarding` (pase de lista del panel bajo `/tours`; `BoardingService` es la única lista de abordaje y la única marca, usada también por el enlace; regla 26) · `lodging` (hospedaje y rooming list: `GET /lodging/:tourId`, `POST /lodging/:tourId/rooms`, `PATCH /lodging/:tourId/rooms/:roomId`, `POST …/rooms/:roomId/assignments`, `DELETE …/rooms/:roomId/slots/:slotIndex`, `DELETE …/rooms/:roomId`, `DELETE …/rooms/:roomId/beds/:slotIndex`; regla 27).
 
 Contratos de cada endpoint: sección C de `../CLAUDE.md`. Reglas de negocio: sección D. Para el detalle de un flujo, lee el servicio (`booking.service.ts`, `payments.service.ts`, `tours.service.ts`, `magic-token.service.ts`, `dashboard.service.ts`).
 
