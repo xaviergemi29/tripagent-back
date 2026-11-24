@@ -108,7 +108,22 @@ export class BookingService {
       // 2. Encontrar el Tour
       const tour = await tx.query.tours.findFirst({
         where: eq(tours.id, magicToken.tourId),
-        with: { agency: true },
+        with: {
+          agency: {
+            columns: { name: true, phone: true },
+            with: {
+              bankAccounts: {
+                columns: {
+                  bankName: true,
+                  accountHolder: true,
+                  clabeNumber: true,
+                  cardNumber: true,
+                },
+                orderBy: (account, { asc }) => [asc(account.position), asc(account.id)],
+              },
+            },
+          },
+        },
       });
       if (!tour) throw new NotFoundError("Tour no encontrado");
 
@@ -338,9 +353,12 @@ export class BookingService {
             ? Number(tour.depositPerPerson) * totalRequestedPassengers
             : null,
         acceptsBankTransfer: tour.acceptsBankTransfer,
-        bankName: tour.agency.bankName,
-        accountHolder: tour.agency.bankAccountHolder,
-        clabeNumber: tour.agency.clabeNumber,
+        bankAccounts: tour.agency.bankAccounts.map((account) => ({
+          bankName: account.bankName,
+          accountHolder: account.accountHolder,
+          clabeNumber: account.clabeNumber,
+          cardNumber: account.cardNumber ?? null,
+        })),
         acceptsCreditCard: tour.acceptsCreditCard,
         message: "Registro completado con éxito.",
       };

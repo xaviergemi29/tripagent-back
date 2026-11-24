@@ -16,14 +16,6 @@ export const baseAgencySchema = z.object({
   email: z.email("Correo electrónico inválido").max(255),
   subscriptionStatus: z.enum(SUBSCRIPTION_STATUS.enumValues).default("trialing"),
   isActive: z.boolean().default(true),
-  bankName: z.string().max(100).optional().nullable(),
-  bankAccountHolder: z.string().max(255).optional().nullable(),
-
-  clabeNumber: z
-    .string("La CLABE es obligatoria")
-    .trim()
-    .regex(/^\d{18}$/, "La CLABE debe contener exactamente 18 números"),
-
   // `null` también se acepta: el formulario de Configuración reenvía la dirección tal como la
   // leyó, y una agencia sin dirección no podía guardar ningún cambio (400 en `body/address`).
   address: z
@@ -31,28 +23,16 @@ export const baseAgencySchema = z.object({
     .nullish()
     .transform((e) => (e === "" ? null : e)),
 
-  // Opcional (decisión del PM, 2026-11-14): en México se cobra sobre todo por SPEI/CLABE.
-  // Vacío → null (la agencia quita su tarjeta); sin enviar → no se modifica.
   // Enlace al aviso de privacidad (LFPDPPP), opcional. Vacío → null; sin enviar → no cambia.
   privacyNoticeUrl: z
     .union([z.url("El aviso de privacidad debe ser un enlace válido (https://…)"), z.literal("")])
     .nullish()
     .transform((value) => (value === "" ? null : value)),
-
-  cardNumber: z
-    .union([
-      z
-        .string()
-        .trim()
-        .regex(/^\d{16}$/, "El número de tarjeta debe tener exactamente 16 dígitos"),
-      z.literal(""),
-    ])
-    .nullish()
-    .transform((value) => (value === "" ? null : value)),
 });
 
 /**
- * `PATCH /agencies` (Configuración → Agencia): solo perfil y datos bancarios.
+ * `PATCH /agencies` (Configuración → Agencia): solo el perfil. Las cuentas bancarias tienen sus
+ * propios endpoints (`/agencies/bank-accounts`): Zod descarta `bankName`, `clabeNumber`, etc.
  * Sin `subscriptionStatus`, `isActive` ni `trialEndsAt` (2026-11-14): con los valores por defecto
  * del schema base, cada guardado regresaba la agencia a "trialing" y la reactivaba; además, un
  * operador podía activar su suscripción o extender su prueba desde la API. La facturación la
@@ -95,31 +75,44 @@ export const updateBrandingBodySchema = z
   .partial();
 
 /**
- * PATCH /agencies/bank-account (OBS-038, 2026-11-17): solo la cuenta para transferencias, desde el
- * modal "Configurar cuenta ahora" del formulario de tours (sin salir del formulario ni reenviar el
- * perfil completo). Mismas reglas que `PATCH /agencies`: CLABE de 18 dígitos (obligatoria), banco
- * y titular opcionales (vacío → null).
+ * Cuenta bancaria de la agencia (`POST /agencies/bank-accounts`). Banco y titular obligatorios;
+ * CLABE de 18 dígitos; tarjeta opcional de 16 dígitos ("" o null → null).
  */
-export const updateBankAccountBodySchema = z.object({
-  bankName: z
+export const createBankAccountBodySchema = z.object({
+  bankName: z.string("El banco es obligatorio").trim().min(1, "El banco es obligatorio").max(100),
+  accountHolder: z
+    .string("El titular es obligatorio")
+    .trim()
+    .min(1, "El titular es obligatorio")
+    .max(255),
+  clabeNumber: z
+    .string("La CLABE es obligatoria")
+    .trim()
+    .regex(/^\d{18}$/, "La CLABE debe contener exactamente 18 números"),
+  cardNumber: z
     .string()
     .trim()
-    .max(100)
+    .regex(/^(\d{16})?$/, "El número de tarjeta debe tener exactamente 16 dígitos")
     .nullish()
-    .transform((value) => value || null),
-  bankAccountHolder: z
-    .string()
-    .trim()
-    .max(255)
-    .nullish()
-    .transform((value) => value || null),
-  clabeNumber: baseAgencySchema.shape.clabeNumber,
+    .transform((value) => (value === "" ? null : value)),
+});
+
+/** `PATCH /agencies/bank-accounts/:id`: mismos campos, todos opcionales, al menos uno. */
+export const updateBankAccountBodySchema = createBankAccountBodySchema
+  .partial()
+  .refine((body) => Object.values(body).some((value) => value !== undefined), {
+    message: "Envía al menos un campo para actualizar",
+  });
+
+export const bankAccountParamsSchema = z.object({
+  id: z.uuid("Id de cuenta bancaria inválido"),
 });
 
 /** PATCH /agencies/policies: políticas generales de la agencia. `""` o `null` las quita. */
 export const updatePoliciesBodySchema = z.object({ policies: policiesTextSchema });
 
 export type UpdateAgencyBody = z.infer<typeof updateAgencyBodySchema>;
+export type CreateBankAccountBody = z.infer<typeof createBankAccountBodySchema>;
 export type UpdateBankAccountBody = z.infer<typeof updateBankAccountBodySchema>;
 export type UpdateBrandingBody = z.infer<typeof updateBrandingBodySchema>;
 

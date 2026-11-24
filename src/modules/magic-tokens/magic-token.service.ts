@@ -35,7 +35,36 @@ export class MagicTokenService {
     const magicToken = await db.query.magicTokens.findFirst({
       where: eq(magicTokens.token, tokenValue),
       with: {
-        tour: { with: { agency: { with: { branding: true } } } },
+        tour: {
+          with: {
+            agency: {
+              // Lista blanca: las columnas bancarias heredadas de `agencies` ya no se leen.
+              columns: {
+                id: true,
+                name: true,
+                phone: true,
+                email: true,
+                address: true,
+                policies: true,
+                privacyNoticeUrl: true,
+                logoPath: true,
+              },
+              with: {
+                branding: true,
+                // Cuentas para transferencias (sin id ni position), en la misma consulta.
+                bankAccounts: {
+                  columns: {
+                    bankName: true,
+                    accountHolder: true,
+                    clabeNumber: true,
+                    cardNumber: true,
+                  },
+                  orderBy: (account, { asc }) => [asc(account.position), asc(account.id)],
+                },
+              },
+            },
+          },
+        },
         booking: {
           with: {
             passengers: { with: { traveler: true } },
@@ -210,10 +239,13 @@ export class MagicTokenService {
           phone: agency.phone,
           email: agency.email,
           address: agency.address ?? null,
-          bankName: agency.bankName,
-          accountHolder: agency.bankAccountHolder,
-          clabeNumber: agency.clabeNumber,
-          cardNumber: agency.cardNumber ?? null,
+          // Cuentas para transferencias (estado de cuenta PDF y "Dónde hacer tus próximos pagos").
+          bankAccounts: agency.bankAccounts.map((account) => ({
+            bankName: account.bankName,
+            accountHolder: account.accountHolder,
+            clabeNumber: account.clabeNumber,
+            cardNumber: account.cardNumber ?? null,
+          })),
           policies: agency.policies ?? null,
           // Identidad visual para el comprobante PDF (logo físico + colores de agency_branding).
           logoPath: agency.logoPath ?? null,
@@ -263,11 +295,13 @@ export class MagicTokenService {
               )
             : null,
           acceptsBankTransfer: tour.acceptsBankTransfer,
-          bankName: agency.bankName,
-          accountHolder: agency.bankAccountHolder,
-          clabeNumber: agency.clabeNumber,
-          // Tarjeta para depósito/transferencia (se muestra junto a la CLABE en "Métodos y opciones de pago").
-          cardNumber: agency.cardNumber ?? null,
+          // Cuentas para transferencias, cada una con su tarjeta opcional ("Métodos y opciones de pago").
+          bankAccounts: agency.bankAccounts.map((account) => ({
+            bankName: account.bankName,
+            accountHolder: account.accountHolder,
+            clabeNumber: account.clabeNumber,
+            cardNumber: account.cardNumber ?? null,
+          })),
           acceptsCreditCard: tour.acceptsCreditCard,
           acceptsCash: tour.acceptsCash,
           cashInstructions: tour.cashInstructions,

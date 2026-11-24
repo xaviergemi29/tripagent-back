@@ -1,18 +1,52 @@
 import { after, afterEach, before, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
+import type { SQL } from "drizzle-orm";
+import { db } from "../src/db/index.js";
 import { Agency } from "../src/modules/agencies/agency.service.js";
-import { AGENCY_A, USER_A, createTestApp, sessionCookie, type TestApp } from "./helpers.js";
+import {
+  AGENCY_A,
+  USER_A,
+  createTestApp,
+  rowMatches,
+  sessionCookie,
+  type TestApp,
+} from "./helpers.js";
 
+/** Fila completa de `agencies`, incluidas las columnas bancarias heredadas (solo respaldo). */
 const fullAgencyRow = (id: string) => ({
   id,
   name: "Agencia Prueba",
-  phone: "5512345678",
+  phone: "+525512345678",
+  phoneCountry: "MX",
   email: "privado@agencia.test",
-  bankName: "Banco Prueba",
-  bankAccountHolder: "Titular Prueba",
-  clabeNumber: "012345678901234567",
+  address: "Calle 1",
+  logoPath: null,
+  privacyNoticeUrl: null,
+  policies: null,
+  subscriptionStatus: "trialing",
+  trialEndsAt: null,
+  subscriptionPeriodEndsAt: null,
+  subscriptionCanceledAt: null,
+  subscriptionCancellationReason: null,
+  subscriptionCancellationComment: null,
+  isActive: true,
+  createdAt: "2026-11-01T00:00:00.000Z",
+  updatedAt: "2026-11-01T00:00:00.000Z",
+  deletedAt: null,
+  bankName: "Banco Heredado",
+  bankAccountHolder: "Titular Heredado",
+  clabeNumber: "999999999999999999",
   cardNumber: "4111111111111111",
 });
+
+const ACCOUNT = {
+  id: "c0c0c0c0-0000-4000-8000-000000000001",
+  bankName: "BBVA",
+  accountHolder: "Agencia Prueba SA",
+  clabeNumber: "012180015549201823",
+  cardNumber: null,
+  position: 1,
+};
 
 describe("GET /api/agencies (datos privados de la agencia de la sesión)", () => {
   let app: TestApp;
@@ -25,8 +59,20 @@ describe("GET /api/agencies (datos privados de la agencia de la sesión)", () =>
   });
   afterEach(() => mock.restoreAll());
 
-  it("GET /api/agencies (Configuración) sigue devolviendo la agencia de la sesión", async () => {
-    const find = mock.method(Agency, "findAgencyById", async (id: string) => fullAgencyRow(id));
+  it("devuelve la agencia de la sesión con bankAccounts y sin las columnas bancarias heredadas", async () => {
+    // Simula la consulta relacional: aplica la lista blanca `columns` y agrega `bankAccounts`.
+    const find = mock.method(db.query.agencies, "findFirst", (async (config: {
+      where: SQL;
+      columns: Record<string, boolean>;
+      with: { bankAccounts: unknown };
+    }) => {
+      const row: Record<string, unknown> = fullAgencyRow(AGENCY_A);
+      if (!rowMatches(config.where, row)) return undefined;
+      const projected = Object.fromEntries(
+        Object.keys(config.columns).map((key) => [key, row[key]]),
+      );
+      return config.with.bankAccounts ? { ...projected, bankAccounts: [ACCOUNT] } : projected;
+    }) as never);
 
     const res = await app.inject({
       method: "GET",
@@ -35,8 +81,16 @@ describe("GET /api/agencies (datos privados de la agencia de la sesión)", () =>
     });
 
     assert.equal(res.statusCode, 200);
-    assert.equal(find.mock.calls[0]?.arguments[0], AGENCY_A);
-    assert.equal(res.json().data.id, AGENCY_A);
+    assert.equal(find.mock.callCount(), 1);
+    const { data } = res.json();
+    assert.equal(data.id, AGENCY_A);
+    assert.equal(data.name, "Agencia Prueba");
+    assert.deepEqual(data.bankAccounts, [ACCOUNT]);
+    for (const key of ["bankName", "bankAccountHolder", "clabeNumber", "cardNumber"]) {
+      assert.equal(key in data, false, `${key} no debe salir en GET /agencies`);
+    }
+    assert.ok(!res.body.includes("999999999999999999"));
+    assert.ok(!res.body.includes("4111111111111111"));
   });
 });
 
@@ -110,15 +164,12 @@ describe("PATCH /api/agencies (datos de la agencia)", () => {
   });
   afterEach(() => mock.restoreAll());
 
-  // Lo que envía `AgencyTab`: solo los campos del formulario.
+  // Lo que envía `AgencyTab`: solo los campos del perfil (las cuentas tienen sus endpoints).
   const formBody = {
     name: "Agencia Prueba",
     phone: "5512345678",
     email: "privado@agencia.test",
-    bankName: "Banco Prueba",
-    bankAccountHolder: "Titular Prueba",
     address: "Calle 1",
-    clabeNumber: "012345678901234567",
   };
   const patch = (payload: unknown) =>
     app.inject({
@@ -128,43 +179,41 @@ describe("PATCH /api/agencies (datos de la agencia)", () => {
       payload,
     });
 
-  it("tarjeta vacía (opcional, decisión del PM) → se guarda como null", async () => {
+  it("sin CLABE ya no responde 400: el perfil se guarda sin datos bancarios", async () => {
     const update = mock.method(Agency, "updateAgency", async (_id: string, body: unknown) => body);
 
-    const res = await patch({ ...formBody, cardNumber: "" });
+    const res = await patch(formBody);
 
     assert.equal(res.statusCode, 200);
-    const [agencyId, body] = update.mock.calls[0]!.arguments as [string, { cardNumber: unknown }];
-    assert.equal(agencyId, AGENCY_A);
-    assert.equal(body.cardNumber, null);
+    assert.equal(update.mock.calls[0]!.arguments[0], AGENCY_A);
   });
 
-  it("tarjeta sin enviar → no se modifica", async () => {
+  it("descarta los campos bancarios del cuerpo (aunque vengan inválidos)", async () => {
     const update = mock.method(Agency, "updateAgency", async (_id: string, body: unknown) => body);
 
-    await patch(formBody);
+    const res = await patch({
+      ...formBody,
+      bankName: "Banco",
+      bankAccountHolder: "Titular",
+      clabeNumber: "123",
+      cardNumber: "4111",
+    });
 
+    assert.equal(res.statusCode, 200);
     const body = update.mock.calls[0]!.arguments[1] as Record<string, unknown>;
-    assert.equal("cardNumber" in body, false);
-  });
-
-  it("tarjeta con menos de 16 dígitos → 400 sin guardar", async () => {
-    const update = mock.method(Agency, "updateAgency", async () => ({}));
-
-    const res = await patch({ ...formBody, cardNumber: "4111" });
-
-    assert.equal(res.statusCode, 400);
-    assert.equal(update.mock.callCount(), 0);
+    assert.deepEqual(
+      ["bankName", "bankAccountHolder", "clabeNumber", "cardNumber"].filter((key) => key in body),
+      [],
+    );
   });
 
   it("guardar la configuración no toca la suscripción (ni la regresa a prueba ni la reactiva)", async () => {
     const update = mock.method(Agency, "updateAgency", async (_id: string, body: unknown) => body);
 
-    const res = await patch({ ...formBody, cardNumber: "4152313412345678" });
+    const res = await patch(formBody);
 
     assert.equal(res.statusCode, 200);
     const body = update.mock.calls[0]!.arguments[1] as Record<string, unknown>;
-    assert.equal(body.cardNumber, "4152313412345678");
     assert.equal("subscriptionStatus" in body, false);
     assert.equal("isActive" in body, false);
     assert.equal("trialEndsAt" in body, false);
@@ -191,9 +240,35 @@ describe("PATCH /api/agencies (datos de la agencia)", () => {
   it("agencia sin dirección (address null) también puede guardar", async () => {
     const update = mock.method(Agency, "updateAgency", async (_id: string, body: unknown) => body);
 
-    const res = await patch({ ...formBody, address: null, cardNumber: "" });
+    const res = await patch({ ...formBody, address: null });
 
     assert.equal(res.statusCode, 200);
     assert.equal((update.mock.calls[0]!.arguments[1] as { address: unknown }).address, null);
+  });
+
+  it("el UPDATE solo escribe columnas del perfil y no devuelve las bancarias heredadas", async () => {
+    const sets: Record<string, unknown>[] = [];
+    let returningKeys: string[] = [];
+    mock.method(db, "update", (() => ({
+      set: (values: Record<string, unknown>) => {
+        sets.push(values);
+        return {
+          where: () => ({
+            returning: (fields: Record<string, unknown>) => {
+              returningKeys = Object.keys(fields);
+              return Promise.resolve([{ id: AGENCY_A }]);
+            },
+          }),
+        };
+      },
+    })) as never);
+
+    const res = await patch({ ...formBody, clabeNumber: "012345678901234567" });
+
+    assert.equal(res.statusCode, 200);
+    for (const key of ["bankName", "bankAccountHolder", "clabeNumber", "cardNumber"]) {
+      assert.equal(key in sets[0]!, false, `${key} no se escribe`);
+      assert.equal(returningKeys.includes(key), false, `${key} no se devuelve`);
+    }
   });
 });

@@ -12,6 +12,7 @@ import {
 } from "./booking.schema.js";
 import { BookingService } from "./booking.service.js";
 import { RATE_LIMITS } from "../../shared/security/rate-limits.js";
+import { getErrorCode } from "../../shared/utils/db-error.util.js";
 
 /**
  * Reservas. Prefijo: /api/bookings. Sin try/catch: los errores de dominio (NotFound → 404,
@@ -115,7 +116,7 @@ export async function bookingRoutes(app: FastifyInstance) {
         return reply.status(200).send({ success: true, data: result });
       } catch (error) {
         // Carrera con el índice único (viajero activo dos veces en el tour).
-        if (error instanceof Error && "code" in error && error.code === "23505") {
+        if (getErrorCode(error) === "23505") {
           return reply
             .status(409)
             .send({ error: "Esta persona ya tiene un lugar activo en este tour." });

@@ -6,11 +6,7 @@ import {
   getTravelersQuerySchema,
   updateTravelerBodySchema,
 } from "./travelers.schema.js";
-
-const pgCode = (error: unknown): string | undefined =>
-  error instanceof Error && "code" in error && typeof error.code === "string"
-    ? error.code
-    : undefined;
+import { getErrorCode } from "../../shared/utils/db-error.util.js";
 
 /** CRM de viajeros de la agencia de la sesión. Prefijo: /api/travelers. */
 export async function travelerRoutes(app: FastifyInstance) {
@@ -55,7 +51,7 @@ export async function travelerRoutes(app: FastifyInstance) {
         if (!result) return reply.status(404).send({ error: "Viajero no encontrado" });
         return reply.status(200).send({ data: result });
       } catch (error) {
-        if (pgCode(error) === "23505") {
+        if (getErrorCode(error) === "23505") {
           return reply.status(409).send({
             error: "El correo electrónico o teléfono ya está registrado por otro viajero",
           });
@@ -79,7 +75,7 @@ export async function travelerRoutes(app: FastifyInstance) {
         if (!result) return reply.status(404).send({ error: "Viajero no encontrado" });
         return reply.status(200).send({ data: result });
       } catch (error) {
-        if (pgCode(error) === "23503") {
+        if (getErrorCode(error) === "23503") {
           return reply.status(409).send({
             error: "No se puede eliminar el viajero porque tiene registros o reservas asociadas",
           });

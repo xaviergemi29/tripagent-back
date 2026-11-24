@@ -23,9 +23,14 @@ function magicTokenWith(status: string, paymentStatus: string, amountPaid: numbe
         id: AGENCY_A,
         name: "Viajes Xalapa",
         phone: "2281234567",
-        bankName: "Banco",
-        bankAccountHolder: "Titular",
-        clabeNumber: "012345678901234567",
+        bankAccounts: [
+          {
+            bankName: "Banco",
+            accountHolder: "Titular",
+            clabeNumber: "012345678901234567",
+            cardNumber: null as string | null,
+          },
+        ],
       },
     },
     booking: {
@@ -263,11 +268,11 @@ describe("Magic Link (portal del viajero): decisiones del PM", () => {
     assert.ok(!res.body.includes("1985-04-02"));
   });
 
-  it("comprobante PDF: la agencia trae logo, colores de marca, correo y tarjeta", async () => {
+  it("comprobante PDF: la agencia trae logo, colores de marca, correo y cuentas con tarjeta", async () => {
     const token = magicTokenWith("CONFIRMED", "PARTIAL", 4500);
+    token.tour.agency.bankAccounts[0]!.cardNumber = "4152313412345678";
     Object.assign(token.tour.agency, {
       email: "hola@viajesxalapa.mx",
-      cardNumber: "4152313412345678",
       logoPath: "/uploads/logos/agency-a-1.png",
       branding: { primaryColor: "#059669", secondaryColor: "#047857", accentColor: null },
     });
@@ -277,29 +282,88 @@ describe("Magic Link (portal del viajero): decisiones del PM", () => {
     const { agency } = res.json().data;
 
     assert.equal(agency.email, "hola@viajesxalapa.mx");
-    assert.equal(agency.cardNumber, "4152313412345678");
+    assert.equal(agency.bankAccounts[0].cardNumber, "4152313412345678");
     assert.equal(agency.logoPath, "/uploads/logos/agency-a-1.png");
     assert.equal(agency.primaryColor, "#059669");
     assert.equal(agency.secondaryColor, "#047857");
   });
 
-  it("instrucciones de pago (PENDING_PAYMENT): trae la tarjeta de la agencia junto a la CLABE (o null)", async () => {
-    const token = magicTokenWith("PENDING", "PENDING", 0);
-    Object.assign(token.tour.agency, { cardNumber: "4152313412345678" });
-    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+  // Varias cuentas bancarias por agencia (2026-11-24): sin id ni position, ordenadas por position
+  // (la consulta las trae ordenadas), y sin los campos sueltos anteriores.
+  const BBVA = {
+    bankName: "BBVA",
+    accountHolder: "Viajes Xalapa SA",
+    clabeNumber: "012180015549201823",
+    cardNumber: "4152313412345678",
+  };
+  const SANTANDER = {
+    bankName: "Santander",
+    accountHolder: "Ana Torres",
+    clabeNumber: "014180655012345678",
+    cardNumber: null,
+  };
+  const withAccounts = (
+    status: string,
+    paymentStatus: string,
+    amountPaid: number,
+    accounts: unknown[],
+  ) => {
+    const token = magicTokenWith(status, paymentStatus, amountPaid);
+    Object.assign(token.tour.agency, { bankAccounts: accounts });
+    return token;
+  };
+  const LEGACY_KEYS = ["bankName", "accountHolder", "clabeNumber", "cardNumber"];
+
+  for (const accounts of [[], [BBVA], [BBVA, SANTANDER]]) {
+    it(`PENDING_PAYMENT: booking.bankAccounts con ${accounts.length} cuenta(s), sin campos sueltos`, async () => {
+      mock.method(db.query.magicTokens, "findFirst", (async () =>
+        withAccounts("PENDING", "PENDING", 0, accounts)) as never);
+
+      const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+      const { flowState, data } = res.json();
+
+      assert.equal(flowState, "PENDING_PAYMENT");
+      assert.deepEqual(data.booking.bankAccounts, accounts);
+      for (const key of LEGACY_KEYS) assert.equal(key in data.booking, false, key);
+    });
+
+    for (const [status, paymentStatus, paid] of [
+      ["CONFIRMED", "PARTIAL", 4500],
+      ["CONFIRMED", "PAID", 6000],
+    ] as const) {
+      it(`${paymentStatus}: agency.bankAccounts con ${accounts.length} cuenta(s), sin campos sueltos`, async () => {
+        mock.method(db.query.magicTokens, "findFirst", (async () =>
+          withAccounts(status, paymentStatus, paid, accounts)) as never);
+
+        const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+        const { agency } = res.json().data;
+
+        assert.deepEqual(agency.bankAccounts, accounts);
+        for (const key of LEGACY_KEYS) assert.equal(key in agency, false, key);
+      });
+    }
+  }
+
+  it("las cuentas no exponen id, position ni auditoría y se piden ordenadas por position", async () => {
+    const find = mock.method(db.query.magicTokens, "findFirst", (async () =>
+      withAccounts("PENDING", "PENDING", 0, [
+        { ...SANTANDER, id: "secreto-id", position: 2, createdByUserId: "u-1" },
+      ])) as never);
 
     const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
-    const { flowState, data } = res.json();
 
-    assert.equal(flowState, "PENDING_PAYMENT");
-    assert.equal(data.booking.clabeNumber, "012345678901234567");
-    assert.equal(data.booking.cardNumber, "4152313412345678");
-
-    mock.restoreAll();
-    mock.method(db.query.magicTokens, "findFirst", (async () =>
-      magicTokenWith("PENDING", "PENDING", 0)) as never);
-    const withoutCard = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
-    assert.equal(withoutCard.json().data.booking.cardNumber, null);
+    assert.deepEqual(res.json().data.booking.bankAccounts, [SANTANDER]);
+    assert.ok(!res.body.includes("secreto-id"));
+    // La consulta pide solo las columnas públicas de cada cuenta, en la misma consulta (sin N+1).
+    const query = find.mock.calls[0]!.arguments[0] as unknown as {
+      with: { tour: { with: { agency: { with: { bankAccounts: { columns: object } } } } } };
+    };
+    assert.deepEqual(query.with.tour.with.agency.with.bankAccounts.columns, {
+      bankName: true,
+      accountHolder: true,
+      clabeNumber: true,
+      cardNumber: true,
+    });
   });
 
   it("comprobante PDF: sin identidad visual guardada usa los colores por defecto y sin logo", async () => {

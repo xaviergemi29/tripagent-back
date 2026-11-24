@@ -19,14 +19,9 @@ import {
 } from "../../shared/storage/uploads.js";
 import { BusinessRuleError } from "../../shared/errors/domain-errors.js";
 import { StaffShareService } from "../staff-share/staff-share.service.js";
+import { getErrorCode } from "../../shared/utils/db-error.util.js";
 
 const BROCHURE_TOO_LARGE = "El folleto no debe pesar más de 5 MB";
-
-/** Código de Postgres de una violación de restricción (unique, FK), si el error lo trae. */
-const pgCode = (error: unknown): string | undefined =>
-  error instanceof Error && "code" in error && typeof error.code === "string"
-    ? error.code
-    : undefined;
 
 /**
  * Tours de la agencia de la sesión. Prefijo: /api/tours. Los errores de dominio (404/400/409) los
@@ -86,7 +81,7 @@ export async function tourRoutes(app: FastifyInstance) {
         if (!tour) return reply.status(404).send({ error: "Tour no encontrado" });
         return reply.status(200).send({ data: tour });
       } catch (error) {
-        if (pgCode(error) === "23505") {
+        if (getErrorCode(error) === "23505") {
           return reply.status(409).send({ error: "El título ingresado ya pertenece a otro tour" });
         }
         throw error;
@@ -156,7 +151,7 @@ export async function tourRoutes(app: FastifyInstance) {
         if (!tour) return reply.status(404).send({ error: "tour no encontrado" });
         return reply.status(200).send({ data: tour });
       } catch (error) {
-        if (pgCode(error) === "23503") {
+        if (getErrorCode(error) === "23503") {
           return reply.status(409).send({
             error: "No se puede eliminar el tour porque tiene registros o reservas asociadas",
           });
@@ -215,7 +210,7 @@ export async function tourRoutes(app: FastifyInstance) {
 
         return reply.status(200).send({ data: tour });
       } catch (error) {
-        if (pgCode(error) === "FST_REQ_FILE_TOO_LARGE") {
+        if (getErrorCode(error) === "FST_REQ_FILE_TOO_LARGE") {
           throw new BusinessRuleError(BROCHURE_TOO_LARGE);
         }
         throw error;
@@ -244,7 +239,7 @@ export async function tourRoutes(app: FastifyInstance) {
         );
         return reply.status(200).send({ data: tour });
       } catch (error) {
-        if (pgCode(error) === "23503") {
+        if (getErrorCode(error) === "23503") {
           return reply.status(400).send({ error: "El vehículo seleccionado no existe." });
         }
         throw error;

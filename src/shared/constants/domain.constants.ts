@@ -37,6 +37,9 @@ export const TOUR_CANCELLATION_REASONS = ["WEATHER", "SECURITY", "LOW_SALES", "O
 /** Máximo de la nota interna de cancelación. */
 export const TOUR_CANCELLATION_NOTE_MAX_LENGTH = 200;
 
+/** Cuentas bancarias por agencia (`agency_bank_accounts`). Espejo en el front. */
+export const AGENCY_BANK_ACCOUNTS_MAX = 2;
+
 // Código de un 409 que el cliente usa para decidir qué mostrar, nunca el texto del mensaje
 // (folleto "Iniciar Reserva", 2026-11-18). Espejo en el front.
 export const CONFLICT_CODES = ["CAPACITY_EXCEEDED", "BOOKINGS_CLOSED", "ALREADY_BOOKED"] as const;

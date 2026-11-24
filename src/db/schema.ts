@@ -114,11 +114,8 @@ export const agencies = pgTable("agencies", {
   }),
   subscriptionCancellationReason: varchar("subscription_cancellation_reason", { length: 30 }),
   subscriptionCancellationComment: text("subscription_cancellation_comment"),
-  bankName: varchar("bank_name", { length: 100 }),
-  bankAccountHolder: varchar("bank_account_holder", { length: 255 }),
-  clabeNumber: varchar("clabe_number", { length: 18 }),
+  // Las cuentas bancarias viven en `agency_bank_accounts` (regla 29; migraciones 0045 y 0046).
   address: text("address"), // Usamos text para direcciones largas
-  cardNumber: varchar("card_number", { length: 16 }), // 16 dígitos estándar
   isActive: boolean("is_active").default(true).notNull(),
   // Timestamps y Soft Delete
   createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).defaultNow().notNull(),
@@ -170,6 +167,42 @@ export const agencyUsers = pgTable(
   },
   // Usuarios de una agencia (alta por CLI, futura administración de roles).
   (table) => [index("idx_agency_users_agency").on(table.agencyId)],
+);
+
+// ============================================================================
+// 2.1 AGENCY BANK ACCOUNTS (cuentas para transferencias, hasta 2 por agencia)
+// ============================================================================
+// `position` = orden de alta (1..n, con huecos tras un borrado; la primera es la "principal" solo
+// por orden). Borrado físico: ninguna otra tabla la referencia. Límite en AGENCY_BANK_ACCOUNTS_MAX.
+export const agencyBankAccounts = pgTable(
+  "agency_bank_accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agencyId: uuid("agency_id")
+      .references(() => agencies.id, { onDelete: "cascade" })
+      .notNull(),
+    bankName: varchar("bank_name", { length: 100 }).notNull(),
+    accountHolder: varchar("account_holder", { length: 255 }).notNull(),
+    clabeNumber: varchar("clabe_number", { length: 18 }).notNull(),
+    cardNumber: varchar("card_number", { length: 16 }),
+    position: integer("position").notNull(),
+    createdByUserId: uuid("created_by_user_id").references(() => agencyUsers.id, {
+      onDelete: "set null",
+    }),
+    updatedByUserId: uuid("updated_by_user_id").references(() => agencyUsers.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("idx_agency_bank_accounts_agency").on(table.agencyId, table.position),
+    uniqueIndex("idx_unique_agency_bank_account_clabe").on(table.agencyId, table.clabeNumber),
+  ],
 );
 
 // ============================================================================
@@ -835,6 +868,7 @@ export const agencyUsersRelations = relations(agencyUsers, ({ one }) => ({
 // Actualiza tus relaciones de `agencies` existentes para incluir a los usuarios:
 export const agenciesRelations = relations(agencies, ({ one, many }) => ({
   branding: one(agencyBranding),
+  bankAccounts: many(agencyBankAccounts),
   users: many(agencyUsers),
   travelers: many(travelers),
   tours: many(tours),
@@ -842,6 +876,10 @@ export const agenciesRelations = relations(agencies, ({ one, many }) => ({
   magicTokens: many(magicTokens),
   payments: many(payments),
   vehicles: many(vehicles),
+}));
+
+export const agencyBankAccountsRelations = relations(agencyBankAccounts, ({ one }) => ({
+  agency: one(agencies, { fields: [agencyBankAccounts.agencyId], references: [agencies.id] }),
 }));
 
 export const agencyBrandingRelations = relations(agencyBranding, ({ one }) => ({

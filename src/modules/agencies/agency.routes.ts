@@ -1,13 +1,16 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import {
+  bankAccountParamsSchema,
   cancelSubscriptionBodySchema,
+  createBankAccountBodySchema,
   updateAgencyBodySchema,
   updateBankAccountBodySchema,
   updateBrandingBodySchema,
   updatePoliciesBodySchema,
 } from "./agency.schema.js";
 import { Agency } from "./agency.service.js";
+import { AgencyBankAccountService } from "./agency-bank-account.service.js";
 import { AgencyBrandingService } from "./agency-branding.service.js";
 import { AgencySubscriptionService } from "./agency-subscription.service.js";
 import {
@@ -19,6 +22,7 @@ import {
   type FileKind,
 } from "../../shared/storage/uploads.js";
 import { BusinessRuleError } from "../../shared/errors/domain-errors.js";
+import { getErrorCode } from "../../shared/utils/db-error.util.js";
 
 /** Logotipo: PNG o JPEG (jsPDF no puede insertar SVG en el comprobante), máximo 2 MB. */
 const LOGO_MIME_EXTENSIONS: Record<string, FileKind> = { "image/png": "png", "image/jpeg": "jpg" };
@@ -127,16 +131,52 @@ export async function agencyRoute(app: FastifyInstance) {
     },
   );
 
-  // Cuenta para transferencias (OBS-038): el modal "Configurar cuenta ahora" del formulario de
-  // tours guarda solo banco, titular y CLABE. Responde { data: { bankName, bankAccountHolder,
-  // clabeNumber } }.
-  server.patch(
-    "/bank-account",
-    { onRequest: [app.authenticate], schema: { body: updateBankAccountBodySchema } },
+  // Cuentas bancarias para transferencias (hasta AGENCY_BANK_ACCOUNTS_MAX por agencia). Cada una
+  // responde { id, bankName, accountHolder, clabeNumber, cardNumber, position }.
+  server.get("/bank-accounts", { onRequest: [app.authenticate] }, async (request, reply) => {
+    const accounts = await AgencyBankAccountService.listAccounts(request.user.agencyId);
+    return reply.status(200).send({ data: accounts });
+  });
+
+  server.post(
+    "/bank-accounts",
+    { onRequest: [app.authenticate], schema: { body: createBankAccountBodySchema } },
     async (request, reply) => {
-      const updated = await Agency.updateBankAccount(request.user.agencyId, request.body);
-      if (!updated) return reply.status(404).send({ error: "Agencia no encontrada" });
-      return reply.status(200).send({ data: updated });
+      const account = await AgencyBankAccountService.createAccount(
+        request.user.agencyId,
+        request.user.id,
+        request.body,
+      );
+      return reply.status(201).send({ data: account });
+    },
+  );
+
+  server.patch(
+    "/bank-accounts/:id",
+    {
+      onRequest: [app.authenticate],
+      schema: { params: bankAccountParamsSchema, body: updateBankAccountBodySchema },
+    },
+    async (request, reply) => {
+      const account = await AgencyBankAccountService.updateAccount(
+        request.user.agencyId,
+        request.user.id,
+        request.params.id,
+        request.body,
+      );
+      return reply.status(200).send({ data: account });
+    },
+  );
+
+  server.delete(
+    "/bank-accounts/:id",
+    { onRequest: [app.authenticate], schema: { params: bankAccountParamsSchema } },
+    async (request, reply) => {
+      const deleted = await AgencyBankAccountService.deleteAccount(
+        request.user.agencyId,
+        request.params.id,
+      );
+      return reply.status(200).send({ data: { id: deleted.id } });
     },
   );
 
@@ -170,7 +210,7 @@ export async function agencyRoute(app: FastifyInstance) {
         if (!branding) return reply.status(404).send({ error: "Agencia no encontrada" });
         return reply.status(200).send({ data: branding });
       } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "23503") {
+        if (getErrorCode(error) === "23503") {
           return reply.status(404).send({ error: "Agencia no encontrada" });
         }
         throw error;
@@ -215,7 +255,7 @@ export async function agencyRoute(app: FastifyInstance) {
       const branding = await AgencyBrandingService.getBranding(agencyId);
       return reply.status(200).send({ data: branding });
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "FST_REQ_FILE_TOO_LARGE") {
+      if (getErrorCode(error) === "FST_REQ_FILE_TOO_LARGE") {
         throw new BusinessRuleError(LOGO_TOO_LARGE);
       }
       throw error;

@@ -1,6 +1,6 @@
 import { after, afterEach, before, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
-import { getTableName, type Table } from "drizzle-orm";
+import { DrizzleQueryError, getTableName, type Table } from "drizzle-orm";
 import { db } from "../src/db/index.js";
 import { AGENCY_A, USER_A, createTestApp, type TestApp } from "./helpers.js";
 
@@ -15,7 +15,7 @@ const validBody = {
 };
 
 /** Transacción falsa que guarda lo insertado y devuelve filas con ids fijos. */
-function fakeRegistrationTx(opts: { failWith?: { code: string } } = {}) {
+function fakeRegistrationTx(opts: { failWith?: { code: string }; wrapInDrizzle?: boolean } = {}) {
   const inserts: { table: string; values: Record<string, unknown> }[] = [];
   const tx = {
     insert: (table: Table) => ({
@@ -23,7 +23,11 @@ function fakeRegistrationTx(opts: { failWith?: { code: string } } = {}) {
         inserts.push({ table: getTableName(table), values });
         return {
           returning: async () => {
-            if (opts.failWith) throw Object.assign(new Error("duplicado"), opts.failWith);
+            if (opts.failWith) {
+              const pgError = Object.assign(new Error("duplicado"), opts.failWith);
+              // Drizzle 0.45 envuelve el error del driver: el código queda en `cause`.
+              throw opts.wrapInDrizzle ? new DrizzleQueryError("insert", [], pgError) : pgError;
+            }
             return getTableName(table) === "agencies"
               ? [{ id: AGENCY_A }]
               : [
@@ -103,6 +107,15 @@ describe("POST /api/auth/register-agency (alta desde /registro)", () => {
   it("dos registros simultáneos con el mismo correo (23505) → 409", async () => {
     mock.method(db.query.agencyUsers, "findFirst", (async () => undefined) as never);
     fakeRegistrationTx({ failWith: { code: "23505" } });
+
+    const res = await register(validBody);
+
+    assert.equal(res.statusCode, 409);
+  });
+
+  it("el 23505 envuelto por Drizzle (DrizzleQueryError, código en cause) también → 409, no 500", async () => {
+    mock.method(db.query.agencyUsers, "findFirst", (async () => undefined) as never);
+    fakeRegistrationTx({ failWith: { code: "23505" }, wrapInDrizzle: true });
 
     const res = await register(validBody);
 

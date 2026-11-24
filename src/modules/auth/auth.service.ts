@@ -9,6 +9,7 @@ import {
   NotFoundError,
 } from "../../shared/errors/domain-errors.js";
 import { SUBSCRIPTION_PLAN } from "../../shared/utils/subscription.util.js";
+import { getErrorCode } from "../../shared/utils/db-error.util.js";
 
 /** Mensaje único para correo inexistente, usuario inactivo o contraseña incorrecta. */
 export const INVALID_CREDENTIALS_MESSAGE = "Credenciales inválidas";
@@ -145,7 +146,7 @@ export class AuthService {
       });
     } catch (error) {
       // Dos registros simultáneos con el mismo correo: el índice único de agency_users decide.
-      if ((error as { code?: string }).code === "23505") {
+      if (getErrorCode(error) === "23505") {
         throw new ConflictError(EMAIL_ALREADY_REGISTERED_MESSAGE);
       }
       throw error;

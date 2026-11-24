@@ -73,7 +73,11 @@ describe("A1 y A2. Registro público del Magic Link", () => {
 
   /** Transacción falsa del registro: el titular ya existe en la agencia con nombre y correo. */
   function fakeRegistration(
-    opts: { bookingStatus?: string; titularBirthDate?: string | null } = {},
+    opts: {
+      bookingStatus?: string;
+      titularBirthDate?: string | null;
+      bankAccounts?: unknown[];
+    } = {},
   ) {
     const updates: { table: string; values: Record<string, unknown> }[] = [];
     const inserts: { table: string; values: Record<string, unknown> }[] = [];
@@ -96,7 +100,7 @@ describe("A1 y A2. Registro público del Magic Link", () => {
             title: "Sierra Gorda",
             price: 1000,
             depositPerPerson: 0,
-            agency: { name: "Viajes Xalapa" },
+            agency: { name: "Viajes Xalapa", bankAccounts: opts.bankAccounts ?? [] },
           }),
         },
         bookings: {
@@ -181,6 +185,25 @@ describe("A1 y A2. Registro público del Magic Link", () => {
       (u) => u.table === "bookings" && "privacyNoticeAcceptedAt" in u.values,
     );
     assert.ok(bookingUpdate, "la reserva guarda privacyNoticeAcceptedAt");
+  });
+
+  it("la respuesta trae las cuentas bancarias de la agencia (bankAccounts), sin campos sueltos", async () => {
+    const account = {
+      bankName: "BBVA",
+      accountHolder: "Viajes Xalapa SA",
+      clabeNumber: "012180015549201823",
+      cardNumber: null,
+    };
+    fakeRegistration({ bankAccounts: [account] });
+
+    const res = await register({ ...payload, privacyNoticeAccepted: true });
+
+    assert.equal(res.statusCode, 201);
+    const data = res.json();
+    assert.deepEqual(data.bankAccounts, [account]);
+    for (const key of ["bankName", "accountHolder", "clabeNumber"]) {
+      assert.equal(key in data, false, key);
+    }
   });
 
   it("crea el aviso BOOKING_COMPLETED para la agencia del token, en la misma transacción", async () => {

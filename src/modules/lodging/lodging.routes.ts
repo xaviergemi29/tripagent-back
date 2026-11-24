@@ -9,12 +9,7 @@ import {
   updateLodgingRoomBodySchema,
 } from "./lodging.schema.js";
 import { LodgingService, ROOM_NUMBER_IN_USE } from "./lodging.service.js";
-
-/** Código de Postgres de una violación de restricción (unique, FK), si el error lo trae. */
-const pgCode = (error: unknown): string | undefined =>
-  error instanceof Error && "code" in error && typeof error.code === "string"
-    ? error.code
-    : undefined;
+import { getErrorCode } from "../../shared/utils/db-error.util.js";
 
 /**
  * Hospedaje del tour (regla 27): hoteles, habitaciones y rooming list. Prefijo: /api/lodging.
@@ -70,7 +65,7 @@ export async function lodgingRoutes(app: FastifyInstance) {
         return reply.send({ data: { room } });
       } catch (error) {
         // Dos envíos simultáneos con el mismo número: lo detiene el índice único parcial.
-        if (pgCode(error) === "23505") {
+        if (getErrorCode(error) === "23505") {
           return reply.status(409).send({ error: ROOM_NUMBER_IN_USE });
         }
         throw error;

@@ -21,7 +21,7 @@ function magicToken(status: string, paymentStatus: string) {
       price: 1200,
       depositPerPerson: 300,
       boardingPoints: [],
-      agency: { id: AGENCY_A, name: "Viajes Xalapa", phone: "2281234567" },
+      agency: { id: AGENCY_A, name: "Viajes Xalapa", phone: "2281234567", bankAccounts: [] },
     },
     booking: {
       id: "booking-1",
