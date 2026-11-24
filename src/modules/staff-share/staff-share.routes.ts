@@ -1,6 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { getStaffShareParamsSchema } from "./staff-share.schema.js";
+import {
+  publicBoardingParamsSchema,
+  publicBoardingPassengerParamsSchema,
+  setBoardingBodySchema,
+} from "../boarding/boarding.schema.js";
 import { StaffShareService } from "./staff-share.service.js";
 import { RATE_LIMITS } from "../../shared/security/rate-limits.js";
 
@@ -24,6 +29,36 @@ export async function staffSharePublicRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const data = await StaffShareService.getPublicView(request.params.token);
+      return reply.status(200).send({ data });
+    },
+  );
+
+  // Pase de lista desde el enlace (RB-MAN-002): la página lo vuelve a pedir cada 15 s y cada toque
+  // es un PATCH; límite propio para no consumir las 120 lecturas de la vista completa.
+  server.get(
+    "/:token/boarding",
+    {
+      config: { rateLimit: RATE_LIMITS.staffShareBoarding },
+      schema: { params: publicBoardingParamsSchema },
+    },
+    async (request, reply) => {
+      const data = await StaffShareService.getPublicBoarding(request.params.token);
+      return reply.status(200).send({ data });
+    },
+  );
+
+  server.patch(
+    "/:token/boarding/:boardingKey",
+    {
+      config: { rateLimit: RATE_LIMITS.staffShareBoarding },
+      schema: { params: publicBoardingPassengerParamsSchema, body: setBoardingBodySchema },
+    },
+    async (request, reply) => {
+      const data = await StaffShareService.setPublicBoarding(
+        request.params.token,
+        request.params.boardingKey,
+        request.body.boarded,
+      );
       return reply.status(200).send({ data });
     },
   );

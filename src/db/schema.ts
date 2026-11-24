@@ -43,6 +43,9 @@ export const SUBSCRIPTION_STATUS = pgEnum("subscription_status", [
   "active",
   "past_due",
   "canceled",
+  // Baja solicitada por la agencia: acceso completo hasta `subscriptionPeriodEndsAt`, después Solo
+  // Lectura (2026-11-23).
+  "cancel_scheduled",
 ]);
 
 // ✅ 1. NUEVOS ENUMS PARA MAYOR CONTROL
@@ -98,6 +101,19 @@ export const agencies = pgTable("agencies", {
   // Control de Suscripción
   subscriptionStatus: SUBSCRIPTION_STATUS("subscription_status").default("trialing").notNull(),
   trialEndsAt: timestamp("trial_ends_at", { mode: "string", withTimezone: true }),
+  // Fin del periodo pagado (cobro por transferencia; lo registra TripAgent al confirmar el pago).
+  // Al cancelar sin fecha registrada se guarda el fin del mes en curso (hora de CDMX).
+  subscriptionPeriodEndsAt: timestamp("subscription_period_ends_at", {
+    mode: "string",
+    withTimezone: true,
+  }),
+  // Baja programada (POST /agencies/subscription/cancel): cuándo la pidió, motivo y comentario.
+  subscriptionCanceledAt: timestamp("subscription_canceled_at", {
+    mode: "string",
+    withTimezone: true,
+  }),
+  subscriptionCancellationReason: varchar("subscription_cancellation_reason", { length: 30 }),
+  subscriptionCancellationComment: text("subscription_cancellation_comment"),
   bankName: varchar("bank_name", { length: 100 }),
   bankAccountHolder: varchar("bank_account_holder", { length: 255 }),
   clabeNumber: varchar("clabe_number", { length: 18 }),
@@ -385,6 +401,12 @@ export const bookingPassengers = pgTable(
     status: PASSENGER_STATUS("status").default("ACTIVE").notNull(),
     seatLabel: varchar("seat_label", { length: 10 }),
     seatAssignedAt: timestamp("seat_assigned_at", { mode: "string", withTimezone: true }),
+    // Pase de lista de abordaje (RB-MAN-002, 2026-11-23): `null` = no ha subido. Quién lo marcó:
+    // el operador con sesión, o `null` si fue el coordinador desde el enlace de staff.
+    boardedAt: timestamp("boarded_at", { mode: "string", withTimezone: true }),
+    boardedByUserId: uuid("boarded_by_user_id").references(() => agencyUsers.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
       .defaultNow()
       .notNull(),

@@ -1,0 +1,3 @@
+ALTER TABLE "booking_passengers" ADD COLUMN "boarded_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "booking_passengers" ADD COLUMN "boarded_by_user_id" uuid;--> statement-breakpoint
+ALTER TABLE "booking_passengers" ADD CONSTRAINT "booking_passengers_boarded_by_user_id_agency_users_id_fk" FOREIGN KEY ("boarded_by_user_id") REFERENCES "public"."agency_users"("id") ON DELETE set null ON UPDATE no action;

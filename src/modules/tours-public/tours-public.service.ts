@@ -40,6 +40,7 @@ export class TourBrochure {
             subscriptionStatus: true,
             trialEndsAt: true,
             createdAt: true,
+            subscriptionPeriodEndsAt: true,
           },
         },
       },

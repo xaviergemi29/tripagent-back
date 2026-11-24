@@ -57,21 +57,52 @@ export const computeTrialProgress = (
  * Modo Solo Lectura por suscripción (feedback del PM, 2026-11-18). Con la prueba vencida o el pago
  * pendiente, la agencia sigue **consultando** todo (tours, Centro de Control, manifiestos, viajeros,
  * Configuración y Suscripción), pero no puede hacer cambios de negocio. `active` opera normal; en
- * `trialing` decide el vencimiento de la prueba; `past_due` y `canceled` quedan en solo lectura.
+ * `trialing` decide el vencimiento de la prueba; `cancel_scheduled` (baja programada) opera hasta
+ * la fecha de corte; `past_due` y `canceled` quedan en solo lectura.
  * El bloqueo total (401) sigue siendo manual: TripAgent pone `agencies.isActive = false` tras 15 días
  * de impago (no hay CRON).
  */
-export const isSubscriptionReadOnly = (status: string, trialExpired: boolean): boolean => {
+export const isSubscriptionReadOnly = (
+  status: string,
+  trialExpired: boolean,
+  periodExpired = false,
+): boolean => {
   if (status === "active") return false;
   if (status === "trialing") return trialExpired;
+  if (status === "cancel_scheduled") return periodExpired;
   return true;
 };
+
+/**
+ * ¿Ya pasó la fecha de corte del periodo pagado? Sin fecha registrada no hay corte (falso): en una
+ * baja programada siempre se guarda la fecha al cancelar.
+ */
+export const isPeriodExpired = (periodEndsAt: string | null, now: Date): boolean =>
+  periodEndsAt !== null && now.getTime() >= Date.parse(periodEndsAt);
+
+/**
+ * Último instante del mes en curso en hora de CDMX (23:59:59.999, UTC−6 fijo desde 2022: sin horario
+ * de verano). Corte de una baja cuando la agencia no tiene fecha de fin de periodo registrada
+ * (decisión del usuario, 2026-11-23).
+ */
+export const endOfCurrentMonthInMexico = (now: Date): string => {
+  const [year, month] = toMexicoDate(now).split("-").map(Number) as [number, number];
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return new Date(
+    `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}T23:59:59.999-06:00`,
+  ).toISOString();
+};
+
+/** Fecha de corte del periodo pagado: la registrada o, si no hay, el fin del mes en curso. */
+export const resolveSubscriptionPeriodEnd = (periodEndsAt: string | null, now: Date): string =>
+  periodEndsAt ? new Date(periodEndsAt).toISOString() : endOfCurrentMonthInMexico(now);
 
 /** Datos de la agencia que deciden el Modo Solo Lectura. */
 export interface AgencySubscriptionFields {
   subscriptionStatus: string;
   trialEndsAt: string | null;
   createdAt: string;
+  subscriptionPeriodEndsAt: string | null;
 }
 
 /** Modo Solo Lectura a partir de la fila de la agencia (misma regla que `GET /agencies/subscription`). */
@@ -80,12 +111,13 @@ export const isAgencyReadOnly = (agency: AgencySubscriptionFields, now: Date = n
     agency.subscriptionStatus,
     computeTrialProgress(resolveTrialEndsAt(agency.trialEndsAt, agency.createdAt), now)
       .trialExpired,
+    isPeriodExpired(agency.subscriptionPeriodEndsAt, now),
   );
 
 /** Código y mensaje del 402 que responde la API a una mutación en Modo Solo Lectura. */
 export const SUBSCRIPTION_READ_ONLY_CODE = "SUBSCRIPTION_READ_ONLY";
 export const SUBSCRIPTION_READ_ONLY_MESSAGE =
-  "Tu cuenta está en modo solo lectura porque tu prueba gratuita terminó o tu plan tiene un pago pendiente. Puedes consultar tu información; para hacer cambios, activa tu plan en Configuración → Suscripción.";
+  "Tu cuenta está en modo solo lectura porque tu prueba gratuita terminó, tu plan tiene un pago pendiente o se canceló. Puedes consultar tu información; para hacer cambios, activa tu plan en Configuración → Suscripción.";
 
 /** Folleto de una agencia en solo lectura: se puede consultar, pero no recibe pre-reservas. */
 export const PUBLIC_BOOKINGS_PAUSED_MESSAGE =

@@ -1,6 +1,7 @@
 import z from "zod";
 import { SUBSCRIPTION_STATUS } from "../../db/schema.js";
 import { policiesTextSchema } from "../../shared/schemas/policies.schema.js";
+import { SUBSCRIPTION_CANCELLATION_REASONS } from "../../shared/constants/domain.constants.js";
 import {
   phoneCountrySchema,
   phoneSchema,
@@ -121,3 +122,9 @@ export const updatePoliciesBodySchema = z.object({ policies: policiesTextSchema 
 export type UpdateAgencyBody = z.infer<typeof updateAgencyBodySchema>;
 export type UpdateBankAccountBody = z.infer<typeof updateBankAccountBodySchema>;
 export type UpdateBrandingBody = z.infer<typeof updateBrandingBodySchema>;
+
+/** Baja programada de la suscripción (POST /agencies/subscription/cancel). */
+export const cancelSubscriptionBodySchema = z.object({
+  reason: z.enum(SUBSCRIPTION_CANCELLATION_REASONS, "Selecciona un motivo"),
+  comments: z.string().trim().max(500, "El comentario admite máximo 500 caracteres").optional(),
+});

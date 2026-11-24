@@ -49,6 +49,16 @@ export const RATE_LIMITS = {
     timeWindow: 10 * MINUTE,
     keyGenerator: (request: FastifyRequest) => getClientIp(request),
   },
+  /**
+   * Pase de lista desde el enlace de staff (RB-MAN-002): la lista se vuelve a pedir cada 15 s y cada
+   * toque es una escritura. 600 cada 10 min por IP alcanza para 2–3 coordinadores pasando lista a un
+   * autobús completo (≈ 40 lecturas + 50–100 marcas cada uno). Por IP del visitante (`getClientIp`).
+   */
+  staffShareBoarding: {
+    max: 600,
+    timeWindow: 10 * MINUTE,
+    keyGenerator: (request: FastifyRequest) => getClientIp(request),
+  },
   /** Validación del Magic Link (cada carga de la página) y folleto público; por IP del visitante. */
   publicRead: {
     max: 120,

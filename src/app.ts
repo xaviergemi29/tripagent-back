@@ -29,6 +29,7 @@ import { tourManifestRoutes } from "./modules/tour-manifest/tour-manifest.routes
 import { notificationRoutes } from "./modules/notifications/notifications.routes.js";
 import { lodgingRoutes } from "./modules/lodging/lodging.routes.js";
 import { staffSharePublicRoutes } from "./modules/staff-share/staff-share.routes.js";
+import { boardingRoutes } from "./modules/boarding/boarding.routes.js";
 import rateLimit from "@fastify/rate-limit";
 import {
   resolveCorsOrigin,
@@ -254,6 +255,7 @@ export const buildApp = async (options: BuildAppOptions = {}) => {
   await app.register(notificationRoutes, { prefix: "/api/notifications" });
   await app.register(lodgingRoutes, { prefix: "/api/lodging" });
   await app.register(staffSharePublicRoutes, { prefix: "/api/public/staff-share" });
+  await app.register(boardingRoutes, { prefix: "/api/tours" });
 
   return app;
 };

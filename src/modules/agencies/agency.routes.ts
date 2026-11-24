@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import {
+  cancelSubscriptionBodySchema,
   updateAgencyBodySchema,
   updateBankAccountBodySchema,
   updateBrandingBodySchema,
@@ -61,6 +62,70 @@ export async function agencyRoute(app: FastifyInstance) {
     if (!subscription) return reply.status(404).send({ error: "Agencia no encontrada" });
     return reply.status(200).send({ data: subscription });
   });
+
+  // Baja y reactivación de la suscripción (2026-11-23): solo el administrador de la agencia. No hay
+  // correo: el aviso a TripAgent (para no enviar el recordatorio de cobro por transferencia) es un
+  // log estructurado de alerta (`event`).
+  const ONLY_ADMIN_MESSAGE = "Solo el administrador de la agencia puede cambiar la suscripción.";
+
+  server.post(
+    "/subscription/cancel",
+    { onRequest: [app.authenticate], schema: { body: cancelSubscriptionBodySchema } },
+    async (request, reply) => {
+      if (request.user.role !== "ADMIN") {
+        return reply.status(403).send({ error: ONLY_ADMIN_MESSAGE });
+      }
+      const result = await AgencySubscriptionService.cancelSubscription(
+        request.user.agencyId,
+        request.body,
+      );
+      request.log.warn(
+        {
+          event: "subscription.cancel_scheduled",
+          agencyId: request.user.agencyId,
+          agencyName: result.agencyName,
+          currentPeriodEndsAt: result.currentPeriodEndsAt,
+          reason: result.reason,
+          comment: result.comment,
+          requestedByUserId: request.user.id,
+        },
+        "Suscripción con baja programada: no enviar el recordatorio de cobro del siguiente mes",
+      );
+      return reply.status(200).send({
+        data: {
+          status: result.status,
+          currentPeriodEndsAt: result.currentPeriodEndsAt,
+          canceledAt: result.canceledAt,
+          reason: result.reason,
+          comment: result.comment,
+        },
+      });
+    },
+  );
+
+  server.post(
+    "/subscription/reactivate",
+    { onRequest: [app.authenticate] },
+    async (request, reply) => {
+      if (request.user.role !== "ADMIN") {
+        return reply.status(403).send({ error: ONLY_ADMIN_MESSAGE });
+      }
+      const result = await AgencySubscriptionService.reactivateSubscription(request.user.agencyId);
+      request.log.warn(
+        {
+          event: "subscription.reactivated",
+          agencyId: request.user.agencyId,
+          agencyName: result.agencyName,
+          currentPeriodEndsAt: result.currentPeriodEndsAt,
+          requestedByUserId: request.user.id,
+        },
+        "Suscripción reactivada: volver a enviar el recordatorio de cobro",
+      );
+      return reply.status(200).send({
+        data: { status: result.status, currentPeriodEndsAt: result.currentPeriodEndsAt },
+      });
+    },
+  );
 
   // Cuenta para transferencias (OBS-038): el modal "Configurar cuenta ahora" del formulario de
   // tours guarda solo banco, titular y CLABE. Responde { data: { bankName, bankAccountHolder,

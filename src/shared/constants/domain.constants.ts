@@ -92,3 +92,15 @@ export const LODGING_ROOM_STATUS = {
   CONSULTED: "CONSULTED",
   CONFIRMED: "CONFIRMED",
 } as const satisfies Record<LodgingRoomStatus, LodgingRoomStatus>;
+
+/**
+ * Motivos de baja de la suscripción (POST /agencies/subscription/cancel). Espejo en el front
+ * (`SUBSCRIPTION_CANCELLATION_REASONS`, con sus etiquetas en español).
+ */
+export const SUBSCRIPTION_CANCELLATION_REASONS = [
+  "LOW_SEASON",
+  "PRICE",
+  "MISSING_FEATURES",
+  "OTHER",
+] as const;
+export type SubscriptionCancellationReason = (typeof SUBSCRIPTION_CANCELLATION_REASONS)[number];

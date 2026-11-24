@@ -295,6 +295,20 @@
       "when": 1795448647072,
       "tag": "0041_easy_stark_industries",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1795470453196,
+      "tag": "0042_puzzling_shadowcat",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1795478137110,
+      "tag": "0043_dazzling_shotgun",
+      "breakpoints": true
     }
   ]
 }

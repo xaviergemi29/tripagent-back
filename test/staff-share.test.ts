@@ -9,6 +9,7 @@ import {
   generateStaffShareToken,
   getStaffShareExpiresAt,
   isStaffShareExpired,
+  buildBoardingKey,
 } from "../src/shared/utils/staff-share.util.js";
 import {
   AGENCY_A,
@@ -57,6 +58,10 @@ const publicTourRow = (overrides: Record<string, unknown> = {}) => ({
     logoPath: "/uploads/logos/a.png",
     isActive: true,
     deletedAt: null,
+    subscriptionStatus: "active",
+    trialEndsAt: null,
+    createdAt: "2026-01-01T00:00:00Z",
+    subscriptionPeriodEndsAt: null,
   },
   vehicle: { name: "Sprinter 20", layoutMap: SPRINTER_LAYOUT },
   ...overrides,
@@ -77,8 +82,12 @@ const bookingRows = () => [
     totalPrice: 2000,
     amountPaid: 1000, // anticipo $500 × 2 cubierto
     magicToken: { numberPassengers: 2, token: SECRET_MAGIC_TOKEN },
+    traveler: traveler("Mariana Ruiz"),
     passengers: [
       {
+        id: "bp-row-mariana",
+        travelerId: "trav-mariana",
+        boardedAt: null,
         isTitular: true,
         seatLabel: "10",
         boardingPoint: "bp-1",
@@ -86,6 +95,9 @@ const bookingRows = () => [
         traveler: traveler("Mariana Ruiz"),
       },
       {
+        id: "bp-row-diego",
+        travelerId: "trav-diego",
+        boardedAt: "2099-03-10T12:05:00.000Z",
         isTitular: false,
         seatLabel: "2",
         boardingPoint: "Las Ánimas (06:30)",
@@ -99,8 +111,12 @@ const bookingRows = () => [
     totalPrice: 1000,
     amountPaid: 0, // anticipo sin cubrir
     magicToken: { numberPassengers: 1, token: SECRET_MAGIC_TOKEN },
+    traveler: traveler("Ana Beltrán"),
     passengers: [
       {
+        id: "bp-row-ana",
+        travelerId: "trav-ana",
+        boardedAt: null,
         isTitular: true,
         seatLabel: null,
         boardingPoint: null,
@@ -115,7 +131,10 @@ const bookingRows = () => [
 function mockPublicQueries(tourRow: Record<string, unknown> | null = publicTourRow()) {
   const findFirst = mock.method(db.query.tours, "findFirst", (async (args: { where: SQL }) =>
     tourRow && rowMatches(args.where, tourRow) ? tourRow : undefined) as never);
-  mock.method(db, "select", (() => chain([{ seatLabel: "3" }, { seatLabel: "11" }])) as never);
+  // 1.ª consulta: bloqueos de staff; las demás (habitaciones del hospedaje): sin hotel.
+  let selectCalls = 0;
+  mock.method(db, "select", (() =>
+    chain(selectCalls++ === 0 ? [{ seatLabel: "3" }, { seatLabel: "11" }] : [])) as never);
   mock.method(db.query.bookings, "findMany", (async () => bookingRows()) as never);
   return { findFirst };
 }
@@ -411,30 +430,43 @@ describe("Enlace de staff: ruta pública", () => {
           { code: "P1", location: "Plaza Xalapa", time: "06:00" },
           { code: "P2", location: "Las Ánimas", time: "06:30" },
         ],
+        canMarkBoarding: true,
         passengers: [
           {
+            boardingKey: buildBoardingKey(VALID_TOKEN, "bp-row-diego"),
             seatLabel: "2",
             fullName: "Diego Ruiz",
+            holderName: "Mariana Ruiz",
             passengerType: "CHILD",
             isTitular: false,
             boardingPointCode: "P2",
             seatRightStatus: "CONFIRMED",
+            rooms: [],
+            boardedAt: "2099-03-10T12:05:00.000Z",
           },
           {
+            boardingKey: buildBoardingKey(VALID_TOKEN, "bp-row-mariana"),
             seatLabel: "10",
             fullName: "Mariana Ruiz",
+            holderName: "Mariana Ruiz",
             passengerType: "ADULT",
             isTitular: true,
             boardingPointCode: "P1",
             seatRightStatus: "CONFIRMED",
+            rooms: [],
+            boardedAt: null,
           },
           {
+            boardingKey: buildBoardingKey(VALID_TOKEN, "bp-row-ana"),
             seatLabel: null,
             fullName: "Ana Beltrán",
+            holderName: "Ana Beltrán",
             passengerType: "ADULT",
             isTitular: true,
             boardingPointCode: null,
             seatRightStatus: "PENDING_DEPOSIT",
+            rooms: [],
+            boardedAt: null,
           },
         ],
       },
@@ -473,6 +505,8 @@ describe("Enlace de staff: ruta pública", () => {
       "agencyId",
       "travelerId",
       "bookingId",
+      "bookingPassengerId",
+      "boardedByUserId",
       "price",
       "totalPrice",
       "amountPaid",
@@ -497,6 +531,8 @@ describe("Enlace de staff: ruta pública", () => {
       SECRET_MAGIC_TOKEN,
       "1990-05-05",
       "booking-1",
+      "bp-row-mariana",
+      "trav-mariana",
       TOUR_ID,
       AGENCY_A,
       VALID_TOKEN,

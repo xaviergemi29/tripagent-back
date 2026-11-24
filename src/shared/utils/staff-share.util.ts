@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { getEndOfMexicoDay } from "./mexico-date.util.js";
 import { addDays } from "./tour-status.util.js";
@@ -55,3 +55,19 @@ export const describeStaffShare = (
     isExpired: isStaffShareExpired(expiresAt, now),
   };
 };
+
+/**
+ * Clave opaca de un pasajero dentro de un enlace de staff (pase de lista, RB-MAN-002): HMAC-SHA256
+ * del id de la fila con el token como llave, en base64url (22 caracteres, 132 bits). No revela ids
+ * internos (regla 26), solo sirve con ese enlace y deja de funcionar al regenerarlo.
+ */
+export const BOARDING_KEY_LENGTH = 22;
+export const buildBoardingKey = (token: string, bookingPassengerId: string): string =>
+  createHmac("sha256", token)
+    .update(bookingPassengerId)
+    .digest("base64url")
+    .slice(0, BOARDING_KEY_LENGTH);
+
+export const boardingKeySchema = z
+  .string()
+  .regex(new RegExp(`^[A-Za-z0-9_-]{${BOARDING_KEY_LENGTH}}$`));

@@ -379,7 +379,14 @@ export class BookingService {
           cancelledAt: true,
         },
         with: {
-          agency: { columns: { subscriptionStatus: true, trialEndsAt: true, createdAt: true } },
+          agency: {
+            columns: {
+              subscriptionStatus: true,
+              trialEndsAt: true,
+              createdAt: true,
+              subscriptionPeriodEndsAt: true,
+            },
+          },
         },
       });
       if (!tour) throw new NotFoundError("Tour no encontrado");
