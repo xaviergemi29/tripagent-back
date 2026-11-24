@@ -35,7 +35,12 @@ function magicTokenWith(status: string, paymentStatus: string, amountPaid: numbe
       totalPrice: 6000,
       amountPaid,
       passengers: [
-        { isTitular: true, boardingPoint: "Plaza (06:00)", traveler: { fullName: "Ana Torres" } },
+        {
+          isTitular: true,
+          status: "ACTIVE",
+          boardingPoint: "Plaza (06:00)",
+          traveler: { fullName: "Ana Torres" },
+        },
       ],
       payments: [
         {
@@ -102,6 +107,25 @@ describe("Magic Link (portal del viajero): decisiones del PM", () => {
       0,
     );
     assert.equal(listed, data.financials.amountPaid); // $4,500 = $4,500
+  });
+
+  it("pide los pagos en orden cronológico (la pantalla numera los abonos como el PDF)", async () => {
+    const calls: unknown[] = [];
+    mock.method(db.query.magicTokens, "findFirst", (async (config: unknown) => {
+      calls.push(config);
+      return magicTokenWith("CONFIRMED", "PARTIAL", 4500);
+    }) as never);
+
+    await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+
+    const config = calls[0] as {
+      with: { booking: { with: { payments: { orderBy: (t: unknown, o: unknown) => unknown } } } };
+    };
+    const orderBy = config.with.booking.with.payments.orderBy(
+      { createdAt: "createdAt", id: "id" },
+      { asc: (column: string) => `asc:${column}` },
+    );
+    assert.deepEqual(orderBy, ["asc:createdAt", "asc:id"]);
   });
 
   it("expone bookingStatus para el distintivo de confirmación", async () => {
@@ -185,10 +209,10 @@ describe("Magic Link (portal del viajero): decisiones del PM", () => {
         p.status,
         p.seatLabel,
       ]),
+      // El acompañante dado de baja (Eva) no aparece en el pase de abordaje.
       [
         [true, "ACTIVE", "4"],
         [false, "ACTIVE", null],
-        [false, "CANCELLED", null],
       ],
     );
     assert.deepEqual(data.passengers[0].boardingPointDetails, { location: "Plaza", time: "06:00" });
@@ -196,7 +220,7 @@ describe("Magic Link (portal del viajero): decisiones del PM", () => {
       location: "Oxxo Tec",
       time: "05:30",
     });
-    assert.equal(data.passengers[2].boardingPointDetails, null);
+    assert.ok(!res.body.includes("Eva Torres"));
   });
 
   it("aviso de menores: hasMinors e isMinor por pasajero (Niño o menor de 18), sin enviar la fecha", async () => {
@@ -407,5 +431,187 @@ describe("Magic Link (portal del viajero): decisiones del PM", () => {
       });
       mock.restoreAll();
     }
+  });
+});
+
+/**
+ * Bug del 2026-11-24: tras transferir la titularidad y dar de baja a un acompañante
+ * (booking_passengers.status = CANCELLED, numberPassengers − 1), el Magic Link seguía mostrando
+ * al acompañante cancelado y, en PENDING_PAYMENT, inflaba el anticipo con él.
+ */
+describe("Magic Link: solo muestra a los pasajeros vigentes (ACTIVE)", () => {
+  let app: TestApp;
+  before(async () => {
+    app = await createTestApp();
+  });
+  after(async () => {
+    await app.close();
+  });
+  afterEach(() => mock.restoreAll());
+
+  /** Titular transferido (Carlos, viajero nuevo) + acompañantes; `numberPassengers` ya descontó la baja. */
+  function tokenWithGroup(
+    status: string,
+    paymentStatus: string,
+    numberPassengers: number,
+    passengers: unknown[],
+  ) {
+    const token = magicTokenWith(status, paymentStatus, paymentStatus === "PENDING" ? 0 : 1000);
+    token.numberPassengers = numberPassengers;
+    token.booking.passengers = passengers as never;
+    return token;
+  }
+
+  const titular = {
+    isTitular: true,
+    status: "ACTIVE",
+    passengerType: "ADULT",
+    boardingPoint: "Plaza (06:00)",
+    traveler: {
+      fullName: "Carlos Ruiz",
+      whatsappPhone: "+522281112233",
+      whatsappCountry: "MX",
+      email: "carlos@correo.mx",
+      emergencyContactName: "Rosa Ruiz",
+      emergencyContactPhone: "+522289998877",
+      emergencyContactCountry: "MX",
+      birthDate: "1980-05-01",
+    },
+  };
+  const activeCompanion = {
+    isTitular: false,
+    status: "ACTIVE",
+    passengerType: "ADULT",
+    boardingPoint: "Plaza (06:00)",
+    traveler: { fullName: "Luis Torres", birthDate: "1990-01-01" },
+  };
+  const cancelledMinor = {
+    isTitular: false,
+    status: "CANCELLED",
+    passengerType: "CHILD",
+    boardingPoint: "Plaza (06:00)",
+    traveler: { fullName: "Mía Torres", birthDate: null },
+  };
+
+  it("titular y acompañante activos: ambos aparecen (PENDING_PAYMENT)", async () => {
+    const token = tokenWithGroup("PENDING", "PENDING", 2, [titular, activeCompanion]);
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const { flowState, data } = (
+      await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" })
+    ).json();
+
+    assert.equal(flowState, "PENDING_PAYMENT");
+    assert.equal(data.booking.titularName, "Carlos Ruiz");
+    assert.deepEqual(data.booking.companionNames, ["Luis Torres"]);
+    assert.equal(data.booking.passengers.length, 2);
+    assert.equal(data.booking.depositAmount, 1000); // $500 × 2 lugares
+  });
+
+  it("PENDING_PAYMENT: excluye al acompañante cancelado; anticipo = depósito × numberPassengers", async () => {
+    // Titular transferido + acompañante dado de baja: el grupo queda en un solo viajero.
+    const token = tokenWithGroup("PENDING", "PENDING", 1, [titular, cancelledMinor]);
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+    const { data } = res.json();
+
+    assert.equal(data.booking.titularName, "Carlos Ruiz");
+    assert.equal(data.titularName, "Carlos Ruiz");
+    assert.deepEqual(data.booking.companionNames, []);
+    assert.deepEqual(
+      data.booking.passengers.map((p: { name: string; isTitular: boolean }) => [
+        p.name,
+        p.isTitular,
+      ]),
+      [["Carlos Ruiz", true]],
+    );
+    assert.equal(data.booking.hasMinors, false); // el menor cancelado no cuenta
+    assert.equal(data.booking.depositAmount, 500); // antes: $500 × 2 filas = $1,000
+    assert.ok(!res.body.includes("Mía Torres"));
+  });
+
+  it("PENDING_PAYMENT: el anticipo usa los lugares apartados aunque haya menos filas registradas", async () => {
+    const token = tokenWithGroup("PENDING", "PENDING", 3, [titular]);
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const { data } = (
+      await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" })
+    ).json();
+    assert.equal(data.booking.depositAmount, 1500); // $500 × 3 lugares (regla 8)
+  });
+
+  for (const paymentStatus of ["PARTIAL", "PAID"] as const) {
+    it(`${paymentStatus}: varios acompañantes con la baja de uno; hasMinors ignora al menor cancelado`, async () => {
+      const otherCompanion = {
+        ...activeCompanion,
+        traveler: { fullName: "Eva Torres", birthDate: "1992-03-03" },
+      };
+      const token = tokenWithGroup("CONFIRMED", paymentStatus, 3, [
+        titular,
+        activeCompanion,
+        cancelledMinor,
+        otherCompanion,
+      ]);
+      mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+      const res = await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" });
+      const { data } = res.json();
+
+      assert.deepEqual(
+        data.passengers.map((p: { name: string; type: string; status: string }) => [
+          p.name,
+          p.type,
+          p.status,
+        ]),
+        [
+          ["Carlos Ruiz", "Titular", "ACTIVE"],
+          ["Luis Torres", "Acompañante", "ACTIVE"],
+          ["Eva Torres", "Acompañante", "ACTIVE"],
+        ],
+      );
+      assert.equal(data.hasMinors, false);
+      assert.equal(data.groupSize, 3);
+      assert.ok(!res.body.includes("Mía Torres"));
+    });
+  }
+
+  it("PAID: grupo que queda en un solo viajero tras la baja del acompañante", async () => {
+    const token = tokenWithGroup("CONFIRMED", "PAID", 1, [
+      titular,
+      { ...activeCompanion, status: "CANCELLED" },
+    ]);
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const { data } = (
+      await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" })
+    ).json();
+    assert.deepEqual(
+      data.passengers.map((p: { name: string; isTitular: boolean }) => [p.name, p.isTitular]),
+      [["Carlos Ruiz", true]],
+    );
+    assert.equal(data.groupSize, 1);
+  });
+
+  it("PENDING_REGISTRATION: prefill con el titular vigente (transferido), no con uno cancelado", async () => {
+    // Fila cancelada marcada como titular primero: el prefill no debe tomarla.
+    const staleTitular = {
+      ...titular,
+      status: "CANCELLED",
+      boardingPoint: "Oxxo",
+      traveler: { ...titular.traveler, fullName: "Ana Torres", email: "ana@correo.mx" },
+    };
+    const token = tokenWithGroup("AWAITING_REGISTRATION", "PENDING", 2, [staleTitular, titular]);
+    mock.method(db.query.magicTokens, "findFirst", (async () => token) as never);
+
+    const { flowState, data } = (
+      await app.inject({ method: "GET", url: "/api/magic-tokens/tok/validate" })
+    ).json();
+
+    assert.equal(flowState, "PENDING_REGISTRATION");
+    assert.equal(data.prefillData.fullName, "Carlos Ruiz");
+    assert.equal(data.prefillData.email, "carlos@correo.mx");
+    assert.equal(data.prefillData.whatsappPhone, "+522281112233");
+    assert.equal(data.prefillData.boardingPoint, "Plaza (06:00)");
   });
 });

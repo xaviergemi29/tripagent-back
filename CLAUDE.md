@@ -108,6 +108,8 @@ test/                 # fuera de src/ (tsc no las compila)
 
 Contratos de cada endpoint: sección C de `../CLAUDE.md`. Reglas de negocio: sección D. Para el detalle de un flujo, lee el servicio (`booking.service.ts`, `payments.service.ts`, `tours.service.ts`, `magic-token.service.ts`, `dashboard.service.ts`).
 
+**Magic Link (`MagicTokenService.validate`):** el grupo (titular, acompañantes, `passengers`, `hasMinors`, prefill del registro) se arma solo con pasajeros `ACTIVE`; el `depositAmount` de `PENDING_PAYMENT` es `getRequiredDeposit(depositPerPerson, getExpectedGroupSize(...))` (lugares apartados, regla 8), nunca × filas de pasajeros.
+
 ## Pruebas
 
 - `test/setup.ts` fuerza una `DATABASE_URL` inalcanzable: **ninguna prueba toca Neon**; toda consulta se simula.

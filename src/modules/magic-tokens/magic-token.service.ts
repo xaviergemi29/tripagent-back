@@ -6,6 +6,7 @@ import { findBoardingPoint } from "../../shared/utils/boarding-point.util.js";
 import { AgencyBrandingService } from "../agencies/agency-branding.service.js";
 import {
   getExpectedGroupSize,
+  getRequiredDeposit,
   resolveAgreedUnitPrice,
 } from "../../shared/utils/booking-rules.util.js";
 import { summarizeRefunds } from "../../shared/utils/refund.util.js";
@@ -36,7 +37,12 @@ export class MagicTokenService {
       with: {
         tour: { with: { agency: { with: { branding: true } } } },
         booking: {
-          with: { passengers: { with: { traveler: true } }, payments: true },
+          with: {
+            passengers: { with: { traveler: true } },
+            // Orden cronológico (desempate por id): la pantalla numera "Abono N" en este orden y el
+            // estado de cuenta PDF también ordena por fecha, así ambos coinciden.
+            payments: { orderBy: (payment, { asc }) => [asc(payment.createdAt), asc(payment.id)] },
+          },
         },
       },
     });
@@ -48,6 +54,9 @@ export class MagicTokenService {
     const tour = magicToken.tour;
     const agency = tour.agency;
     const brandingColors = AgencyBrandingService.resolveColors(agency.branding);
+    // Solo los pasajeros vigentes forman el grupo del Magic Link: un acompañante dado de baja
+    // (booking_passengers.status = CANCELLED) no aparece como titular, acompañante ni menor.
+    const activePassengers = booking.passengers.filter((p) => p.status === "ACTIVE");
 
     // 2. Máquina de Estados (Derivación jerárquica)
     let flowState = "";
@@ -82,7 +91,7 @@ export class MagicTokenService {
     let payloadData = {};
 
     if (flowState === "PENDING_REGISTRATION") {
-      const titularPassenger = booking.passengers.find((p) => p.isTitular);
+      const titularPassenger = activePassengers.find((p) => p.isTitular);
       const traveler = titularPassenger?.traveler;
 
       // Props exactas para <TourRegistrationView />
@@ -172,7 +181,7 @@ export class MagicTokenService {
             method: p.method,
             reference: p.referenceInfo,
           })),
-        passengers: booking.passengers.map((p) => {
+        passengers: activePassengers.map((p) => {
           // Punto configurado en el tour (ubicación y hora), resuelto con la misma regla del manifiesto.
           const point = findBoardingPoint(p.boardingPoint, tour.boardingPoints ?? []);
           return {
@@ -193,10 +202,8 @@ export class MagicTokenService {
             }),
           };
         }),
-        hasMinors: booking.passengers.some(
-          (p) =>
-            p.status === "ACTIVE" &&
-            isMinorPassenger({ passengerType: p.passengerType, birthDate: p.traveler.birthDate }),
+        hasMinors: activePassengers.some((p) =>
+          isMinorPassenger({ passengerType: p.passengerType, birthDate: p.traveler.birthDate }),
         ),
         agency: {
           name: agency.name,
@@ -215,10 +222,10 @@ export class MagicTokenService {
           accentColor: brandingColors.accentColor,
         },
       };
-    } else if (flowState === "PENDING_PAYMENT" || flowState === "PARTIAL_PAYMENT") {
+    } else if (flowState === "PENDING_PAYMENT") {
       // 🎯 Props exactas para <BookingSuccessView />
-      const titular = booking.passengers.find((p) => p.isTitular)?.traveler;
-      const companions = booking.passengers
+      const titular = activePassengers.find((p) => p.isTitular)?.traveler;
+      const companions = activePassengers
         .filter((p) => !p.isTitular)
         .map((p) => p.traveler.fullName);
 
@@ -229,7 +236,7 @@ export class MagicTokenService {
           agencyPhone: agency.phone,
           titularName: titular?.fullName,
           companionNames: companions,
-          passengers: booking.passengers.map((p) => ({
+          passengers: activePassengers.map((p) => ({
             name: p.traveler.fullName,
             isTitular: p.isTitular,
             boardingPoint: p.boardingPoint,
@@ -239,14 +246,21 @@ export class MagicTokenService {
             }),
           })),
           // Aviso de menores (Art. 58, fr. X Ter, LGT) en "Métodos y opciones de pago".
-          hasMinors: booking.passengers.some(
-            (p) =>
-              p.status === "ACTIVE" &&
-              isMinorPassenger({ passengerType: p.passengerType, birthDate: p.traveler.birthDate }),
+          hasMinors: activePassengers.some((p) =>
+            isMinorPassenger({ passengerType: p.passengerType, birthDate: p.traveler.birthDate }),
           ),
           totalAmount: Number(booking.totalPrice),
+          // Anticipo requerido = anticipo por persona × lugares apartados (regla 8, igual que el
+          // dashboard), no × filas de pasajeros: una baja no debe inflarlo con el cancelado.
           depositAmount: tour.depositPerPerson
-            ? Number(tour.depositPerPerson) * booking.passengers.length
+            ? getRequiredDeposit(
+                Number(tour.depositPerPerson),
+                getExpectedGroupSize(
+                  magicToken.numberPassengers,
+                  Number(booking.totalPrice),
+                  Number(tour.price),
+                ),
+              )
             : null,
           acceptsBankTransfer: tour.acceptsBankTransfer,
           bankName: agency.bankName,
