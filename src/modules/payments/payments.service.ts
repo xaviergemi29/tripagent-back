@@ -61,6 +61,27 @@ export class PaymentService {
         assertTourNotInAuditMode(booking.tour);
       }
 
+      // Moneda del movimiento = moneda del tour: un abono de un tour USD nunca se guarda como MXN.
+      const tourCurrency = booking.tour?.currency ?? data.currency;
+      if (data.currency !== tourCurrency) {
+        throw new BusinessRuleError(
+          `La moneda del movimiento (${data.currency}) no coincide con la del tour (${tourCurrency}).`,
+        );
+      }
+      // Tours en USD (RB-PAG-004): se registran los pesos recibidos o devueltos y el tipo de cambio.
+      if (tourCurrency === "USD") {
+        if (data.collectedAmount === undefined || data.exchangeRate === undefined) {
+          throw new BusinessRuleError(
+            "En un tour en USD indica el monto en pesos (MXN) y el tipo de cambio aplicado.",
+          );
+        }
+        if (data.collectedCurrency !== undefined && data.collectedCurrency !== "MXN") {
+          throw new BusinessRuleError(
+            "En un tour en USD el monto recibido o devuelto se captura en pesos (MXN).",
+          );
+        }
+      }
+
       // Tour cancelado por la agencia (decisión del PM, 2026-11-14): Modo Auditoría con una
       // excepción, los reembolsos. No entra dinero nuevo.
       if (booking.tour?.cancelledAt && data.type !== "REFUND") {
@@ -152,7 +173,8 @@ export class PaymentService {
           amount: actualAmount,
           currency: data.currency,
           collectedAmount: actualCollectedAmount,
-          collectedCurrency: data.collectedCurrency || null,
+          collectedCurrency:
+            data.collectedCurrency ?? (actualCollectedAmount !== null ? "MXN" : null),
           exchangeRate: data.exchangeRate || null,
           method: data.method,
           type: data.type,

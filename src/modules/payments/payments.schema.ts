@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PAYMENT_METHOD, PAYMENT_TYPE, CURRENCIES } from "../../db/schema.js";
+import { hasAtMostDecimals } from "../../shared/utils/money.util.js";
 
 export const createPaymentParamsSchema = z.object({
   bookingId: z.uuid("ID de reserva inválido"),
@@ -8,9 +9,19 @@ export const createPaymentParamsSchema = z.object({
 export const createPaymentBodySchema = z.object({
   amount: z.number().positive("El monto debe ser mayor a 0"),
   currency: z.enum(CURRENCIES.enumValues).default("MXN"),
-  collectedAmount: z.number().positive().optional(),
+  // Tours en USD (RB-PAG-004): pesos recibidos o devueltos y el tipo de cambio que aplicó la
+  // agencia. El `amount` (USD) llega ya calculado o ajustado por el operador: no se recalcula.
+  collectedAmount: z
+    .number()
+    .positive("El monto en pesos debe ser mayor a 0")
+    .refine((value) => hasAtMostDecimals(value, 2), "El monto en pesos admite máximo 2 decimales")
+    .optional(),
   collectedCurrency: z.enum(CURRENCIES.enumValues).optional(),
-  exchangeRate: z.number().positive().optional(),
+  exchangeRate: z
+    .number()
+    .positive("El tipo de cambio debe ser mayor a 0")
+    .refine((value) => hasAtMostDecimals(value, 4), "El tipo de cambio admite máximo 4 decimales")
+    .optional(),
   method: z.enum(PAYMENT_METHOD.enumValues, "Método de pago requerido"),
   type: z.enum(PAYMENT_TYPE.enumValues).default("PAYMENT"),
   referenceInfo: z

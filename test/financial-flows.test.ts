@@ -48,6 +48,8 @@ interface ScenarioOptions {
   tourPrice?: number;
   /** Anticipo por persona del tour (por defecto $300). */
   depositPerPerson?: number;
+  /** Moneda del tour (por defecto MXN). */
+  tourCurrency?: "MXN" | "USD";
 }
 
 function scenario({
@@ -60,6 +62,7 @@ function scenario({
   unitPrice = 1000,
   tourPrice = 1000,
   depositPerPerson = 300,
+  tourCurrency = "MXN",
 }: ScenarioOptions = {}) {
   const payments = ledger.map((entry) => ({
     id: randomUUID(),
@@ -89,7 +92,7 @@ function scenario({
         agencyId: AGENCY_A,
         price: tourPrice,
         depositPerPerson,
-        currency: "MXN",
+        currency: tourCurrency,
         cancelledAt: tourCancelled ? "2026-11-14T10:00:00.000Z" : null,
       },
     ],
@@ -321,6 +324,95 @@ describe("Flujos financieros y de grupo (de punta a punta)", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────────────────────────
+  describe("1b. Tours en USD (RB-PAG-004)", () => {
+    const usd = (extra: Record<string, unknown> = {}) =>
+      pay(259.07, {
+        currency: "USD",
+        collectedAmount: 5000,
+        collectedCurrency: "MXN",
+        exchangeRate: 19.3,
+        ...extra,
+      });
+
+    it("guarda exactamente los USD, los pesos y el tipo de cambio enviados (sin recalcular)", async () => {
+      const fake = scenario({ tourCurrency: "USD" });
+      // Ajuste manual de centavos: 5,000 / 19.30 = 259.07, pero la agencia acreditó 260.00.
+      const res = await usd({ amount: 260 });
+
+      assert.equal(res.statusCode, 201);
+      const [entry] = fake.paymentsOf(BOOKING);
+      assert.equal(entry!.amount, 260);
+      assert.equal(entry!.currency, "USD");
+      assert.equal(entry!.collectedAmount, 5000);
+      assert.equal(entry!.collectedCurrency, "MXN");
+      assert.equal(entry!.exchangeRate, 19.3);
+      assert.equal(fake.booking(BOOKING).amountPaid, 260);
+    });
+
+    it("sin moneda de lo cobrado, la guarda como MXN", async () => {
+      const fake = scenario({ tourCurrency: "USD" });
+      const res = await usd({ collectedCurrency: undefined });
+      assert.equal(res.statusCode, 201);
+      assert.equal(fake.paymentsOf(BOOKING)[0]!.collectedCurrency, "MXN");
+    });
+
+    it("400 sin los pesos o sin el tipo de cambio, sin escribir", async () => {
+      const fake = scenario({ tourCurrency: "USD" });
+      for (const missing of ["collectedAmount", "exchangeRate"]) {
+        const res = await usd({ [missing]: undefined });
+        assert.equal(res.statusCode, 400, missing);
+        assert.match(res.json().error, /monto en pesos \(MXN\) y el tipo de cambio/);
+      }
+      assert.equal(fake.paymentsOf(BOOKING).length, 0);
+    });
+
+    it("400 si lo cobrado no está en pesos", async () => {
+      const fake = scenario({ tourCurrency: "USD" });
+      const res = await usd({ collectedCurrency: "USD" });
+      assert.equal(res.statusCode, 400);
+      assert.equal(fake.paymentsOf(BOOKING).length, 0);
+    });
+
+    it("400 con más de 4 decimales en el tipo de cambio o más de 2 en los pesos", async () => {
+      const fake = scenario({ tourCurrency: "USD" });
+      assert.equal((await usd({ exchangeRate: 19.35401 })).statusCode, 400);
+      assert.equal((await usd({ collectedAmount: 5000.555 })).statusCode, 400);
+      assert.equal((await usd({ exchangeRate: 19.354 })).statusCode, 201);
+      assert.equal(fake.paymentsOf(BOOKING).length, 1);
+    });
+
+    it("400 si la moneda del movimiento no es la del tour (en ambos sentidos)", async () => {
+      const usdTour = scenario({ tourCurrency: "USD" });
+      const res = await usd({ currency: "MXN" });
+      assert.equal(res.statusCode, 400);
+      assert.match(res.json().error, /no coincide con la del tour \(USD\)/);
+      assert.equal(usdTour.paymentsOf(BOOKING).length, 0);
+
+      const mxnTour = scenario();
+      const res2 = await pay(500, { currency: "USD" });
+      assert.equal(res2.statusCode, 400);
+      assert.equal(mxnTour.paymentsOf(BOOKING).length, 0);
+    });
+
+    it("el tope del saldo pendiente se aplica a los USD finales", async () => {
+      const fake = scenario({ tourCurrency: "USD" });
+      const res = await usd({ amount: 3000.01, collectedAmount: 57900.19 });
+      assert.equal(res.statusCode, 400);
+      assert.match(res.json().error, /saldo pendiente de \$3,000\.00 USD/);
+      assert.equal(fake.paymentsOf(BOOKING).length, 0);
+    });
+
+    it("un tour en MXN sigue igual: sin pesos ni tipo de cambio", async () => {
+      const fake = scenario();
+      const res = await pay(500);
+      assert.equal(res.statusCode, 201);
+      const [entry] = fake.paymentsOf(BOOKING);
+      assert.equal(entry!.collectedAmount, null);
+      assert.equal(entry!.collectedCurrency, null);
+      assert.equal(entry!.exchangeRate, null);
+    });
+  });
+
   describe("2. Anulación de un abono", () => {
     it("crea un contra-asiento ligado al abono, recalcula pagado y estado, y la reserva vuelve a PENDING", async () => {
       const fake = scenario();
