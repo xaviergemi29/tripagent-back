@@ -9,8 +9,9 @@ import {
 } from "../src/shared/utils/vehicle-layout.util.js";
 import { AGENCY_A, USER_A, chain, createTestApp, sessionCookie, type TestApp } from "./helpers.js";
 
-// Catálogo de plantillas de vehículos (2026-11-12): croquis tipados (SEAT pasajero/staff, DRIVER,
-// WC), capacidad sin operador, asignación desde el catálogo y asientos de staff del croquis.
+// Catálogo de plantillas de vehículos (2026-11-12): croquis tipados (SEAT, DRIVER, WC), capacidad
+// sin operador y asignación desde el catálogo. Desde el 2026-11-25 el croquis no tiene asientos de
+// staff: todos son de pasajero y la agencia bloquea los de su staff en cada tour (`staffCapacity`).
 
 const TOUR_ID = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
 const TEMPLATE_ID = "a2a2a2a2-a2a2-4a2a-8a2a-a2a2a2a2a2a2";
@@ -30,35 +31,71 @@ function mockTransaction(tx: Record<string, unknown>) {
 }
 
 describe("Catálogo de plantillas: croquis de las imágenes", () => {
-  it("las tres plantillas son croquis válidos (sin etiquetas repetidas)", () => {
+  it("todas las plantillas son croquis válidos (sin etiquetas repetidas)", () => {
     for (const definition of VEHICLE_TEMPLATE_CATALOG) {
       assert.doesNotThrow(() => layoutMapSchema.parse(definition.layoutMap), definition.code);
     }
   });
 
-  it("Sprinter 20: 20 asientos (19 de pasajero + 1 de staff); el operador no cuenta", () => {
-    assert.deepEqual(getVehicleCapacity(template("SPRINTER_20").layoutMap), {
-      total: 20,
-      passenger: 19,
-      staff: 1,
+  it("todos los asientos del catálogo son de pasajero", () => {
+    for (const definition of VEHICLE_TEMPLATE_CATALOG) {
+      const layoutMap = layoutMapSchema.parse(definition.layoutMap);
+      const kinds = new Set(getLayoutSeats(layoutMap).map((s) => s.kind));
+      assert.deepEqual([...kinds], ["PASSENGER"], definition.code);
+    }
+  });
+
+  it("un croquis con un asiento de staff fijo ya no es válido", () => {
+    assert.throws(() =>
+      layoutMapSchema.parse([[{ type: "DRIVER" }, { type: "SEAT", label: "1", kind: "STAFF" }]]),
+    );
+  });
+
+  // Sprinter 14, 17 y 20 (2026-11-25): el copiloto es el asiento 1 de PASAJERO (sin staff en el croquis;
+  // la agencia lo bloquea si lleva staff) y el operador no cuenta. La columna 2 es el pasillo salvo
+  // en las filas sin pasillo del croquis.
+  const sprinterCases = [
+    { code: "SPRINTER_14", total: 14, rowsWithoutAisle: [4] },
+    { code: "SPRINTER_17", total: 17, rowsWithoutAisle: [1, 5] },
+    { code: "SPRINTER_20", total: 20, rowsWithoutAisle: [1, 6] },
+  ];
+  for (const { code, total, rowsWithoutAisle } of sprinterCases) {
+    it(`${code}: ${total} asientos de pasajero, copiloto = asiento 1, sin staff; el operador no cuenta`, () => {
+      const definition = template(code);
+      const layoutMap = layoutMapSchema.parse(definition.layoutMap);
+      const capacity = getVehicleCapacity(layoutMap);
+      assert.deepEqual(capacity, { total, passenger: total });
+      // El número del nombre es la capacidad total del croquis.
+      assert.equal(Number(/(\d+) lugares/.exec(definition.name)?.[1]), capacity.total);
+
+      assert.deepEqual(labels(code), range(1, total));
+      assert.deepEqual(layoutMap[0], [
+        { type: "DRIVER" },
+        null,
+        null,
+        { type: "SEAT", label: "1", kind: "PASSENGER" },
+      ]);
+
+      layoutMap.forEach((row, rowIndex) => {
+        assert.equal(row.length, 4, `${code} fila ${rowIndex}`);
+        if (rowIndex === 0) return;
+        const aisleCell = row[2];
+        if (rowsWithoutAisle.includes(rowIndex)) {
+          assert.equal(typeof aisleCell, "object", `${code} fila ${rowIndex}: asiento en col 2`);
+        } else {
+          assert.equal(aisleCell, "AISLE", `${code} fila ${rowIndex}: pasillo en col 2`);
+        }
+      });
     });
-    const seats = getLayoutSeats(template("SPRINTER_20").layoutMap);
-    assert.deepEqual(
-      seats.filter((s) => s.kind === "STAFF").map((s) => s.label),
-      ["1"],
-    );
-    // Numeración de la imagen: 2–20 para pasajeros, en orden de lectura.
-    assert.deepEqual(
-      seats.filter((s) => s.kind === "PASSENGER").map((s) => s.label),
-      range(2, 20),
-    );
-    // El operador está al frente a la izquierda y el staff en la misma fila, a la derecha.
-    assert.deepEqual(template("SPRINTER_20").layoutMap[0]?.[0], { type: "DRIVER" });
+  }
+
+  it("SPRINTER_17: la fila 1 deja libre el lado derecho (puerta corrediza)", () => {
+    assert.equal(template("SPRINTER_17").layoutMap[1]?.[3], null);
   });
 
   it("Autobús 48: asientos 1–48, WC de 2×2 junto a las filas 45–46 y 47–48", () => {
     const layoutMap = template("BUS_48_WC").layoutMap;
-    assert.deepEqual(getVehicleCapacity(layoutMap), { total: 48, passenger: 48, staff: 0 });
+    assert.deepEqual(getVehicleCapacity(layoutMap), { total: 48, passenger: 48 });
     assert.deepEqual(labels("BUS_48_WC"), range(1, 48));
     const wcRow = layoutMap.findIndex((row) =>
       row.some((c) => typeof c === "object" && c?.type === "WC"),
@@ -72,7 +109,7 @@ describe("Catálogo de plantillas: croquis de las imágenes", () => {
 
   it("Autobús 50: asientos 1–50, WC de 1×2 junto a la fila 49–50", () => {
     const layoutMap = template("BUS_50_WC").layoutMap;
-    assert.deepEqual(getVehicleCapacity(layoutMap), { total: 50, passenger: 50, staff: 0 });
+    assert.deepEqual(getVehicleCapacity(layoutMap), { total: 50, passenger: 50 });
     assert.deepEqual(labels("BUS_50_WC"), range(1, 50));
     assert.deepEqual(layoutMap.at(-1)?.[3], { type: "WC", rowSpan: 1, colSpan: 2 });
   });
@@ -83,7 +120,7 @@ describe("Catálogo de plantillas: croquis de las imágenes", () => {
       ["03", "04", "AISLE", "05"],
     ];
     assert.doesNotThrow(() => layoutMapSchema.parse(legacy));
-    assert.deepEqual(getVehicleCapacity(legacy), { total: 5, passenger: 5, staff: 0 });
+    assert.deepEqual(getVehicleCapacity(legacy), { total: 5, passenger: 5 });
   });
 
   it("rechaza etiquetas repetidas y croquis sin asientos", () => {
@@ -130,7 +167,31 @@ describe("API de plantillas y asignación desde el catálogo", () => {
     });
 
     assert.equal(res.statusCode, 200);
-    assert.deepEqual(res.json().data[0].capacity, { total: 20, passenger: 19, staff: 1 });
+    assert.deepEqual(res.json().data[0].capacity, { total: 20, passenger: 20 });
+  });
+
+  it("GET /api/vehicle-templates: las Sprinter 14 y 17 llegan con su capacidad (sin operador)", async () => {
+    mock.method(db.query.vehicleTemplates, "findMany", (async () =>
+      VEHICLE_TEMPLATE_CATALOG.map((definition, index) => ({
+        id: `${TEMPLATE_ID.slice(0, -2)}${String(index).padStart(2, "0")}`,
+        code: definition.code,
+        name: definition.name,
+        description: definition.description,
+        layoutMap: definition.layoutMap,
+      }))) as never);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/vehicle-templates",
+      cookies: cookies(),
+    });
+
+    assert.equal(res.statusCode, 200);
+    const byCode = new Map(
+      (res.json().data as { code: string; capacity: unknown }[]).map((t) => [t.code, t.capacity]),
+    );
+    assert.deepEqual(byCode.get("SPRINTER_14"), { total: 14, passenger: 14 });
+    assert.deepEqual(byCode.get("SPRINTER_17"), { total: 17, passenger: 17 });
   });
 
   /** Transacción de assignVehicle con la plantilla Sprinter y `seatRight` lugares con anticipo. */
@@ -211,13 +272,13 @@ describe("API de plantillas y asignación desde el catálogo", () => {
     assert.equal(insert.mock.callCount(), 0);
   });
 
-  it("el candado usa los asientos de PASAJERO: 20 con derecho a asiento no caben en la Sprinter (19)", async () => {
-    const { update } = templateTx({ existingVehicle: true, seatRight: 20 });
+  it("el candado usa los asientos de PASAJERO: 21 con derecho a asiento no caben en la Sprinter (20)", async () => {
+    const { update } = templateTx({ existingVehicle: true, seatRight: 21 });
 
     const res = await assignTemplate({ templateId: TEMPLATE_ID });
 
     assert.equal(res.statusCode, 409);
-    assert.match(res.json().error, /19 asientos de pasajero y 20 pasajeros/);
+    assert.match(res.json().error, /20 asientos de pasajero y 21 pasajeros/);
     assert.equal(update.mock.callCount(), 0);
   });
 
@@ -256,10 +317,9 @@ describe("API de plantillas y asignación desde el catálogo", () => {
             }),
           },
         },
-        select: (() => {
-          let call = 0;
-          return () => chain(call++ === 0 ? [{ total: otherBlocks, id: "b-1" }] : [{ id: "b-1" }]);
-        })(),
+        // Toda lectura devuelve la misma fila: el candado del tour solo usa `id` y el conteo de
+        // bloqueos, `total`.
+        select: () => chain([{ total: otherBlocks, id: "b-1" }]),
         update,
         delete: () => chain(undefined),
         insert,
@@ -275,12 +335,10 @@ describe("API de plantillas y asignación desde el catálogo", () => {
         payload,
       });
 
-    it("el asiento de staff del croquis no se asigna a pasajeros (409)", async () => {
-      const { update } = seatTx(1);
+    it("el asiento 1 (copiloto) se asigna a un pasajero", async () => {
+      seatTx(0);
       const res = await patchSeat("1", { status: "ASSIGNED", passengerId: VEHICLE_ID });
-      assert.equal(res.statusCode, 409);
-      assert.match(res.json().error, /reservado para el staff/);
-      assert.equal(update.mock.callCount(), 0);
+      assert.equal(res.statusCode, 200);
     });
 
     it("una etiqueta que no existe en el croquis → 404 (p. ej. el formato anterior '07')", async () => {
@@ -295,18 +353,25 @@ describe("API de plantillas y asignación desde el catálogo", () => {
       assert.equal(res.statusCode, 200);
     });
 
-    it("el asiento de staff del croquis cuenta para el tope: staffCapacity 1 no deja bloquear más", async () => {
-      const { insert } = seatTx(1);
-      const res = await patchSeat("5", { status: "BLOCKED" });
+    it("sin lugares de staff en el tour no se bloquea ningún asiento (409)", async () => {
+      const { insert } = seatTx(0);
+      const res = await patchSeat("1", { status: "BLOCKED" });
       assert.equal(res.statusCode, 409);
       assert.equal(insert.mock.callCount(), 0);
     });
 
-    it("staffCapacity 2 permite bloquear un asiento además del de staff del croquis", async () => {
-      const { insert } = seatTx(2);
-      const res = await patchSeat("5", { status: "BLOCKED" });
+    it("staffCapacity 1: el operador bloquea el copiloto (o cualquier asiento) para su staff", async () => {
+      const { insert } = seatTx(1);
+      const res = await patchSeat("1", { status: "BLOCKED" });
       assert.equal(res.statusCode, 200);
       assert.equal(insert.mock.callCount(), 1);
+    });
+
+    it("el tope solo cuenta bloqueos: staffCapacity 1 con otro asiento bloqueado → 409", async () => {
+      const { insert } = seatTx(1, 1);
+      const res = await patchSeat("5", { status: "BLOCKED" });
+      assert.equal(res.statusCode, 409);
+      assert.equal(insert.mock.callCount(), 0);
     });
 
     it("un asiento de pasajero existente se asigna normalmente", async () => {

@@ -8,11 +8,12 @@ import { z } from "zod";
  * - `null` → espacio vacío (o celda cubierta por un WC que se extiende con `rowSpan`/`colSpan`).
  * - `"AISLE"` → pasillo.
  * - cualquier otro texto → asiento de pasajero con esa etiqueta (formato anterior).
- * - `{ type: "SEAT", label, kind }` → asiento; `kind = "STAFF"` lo reserva para el staff.
+ * - `{ type: "SEAT", label, kind }` → asiento de pasajero (`kind` siempre "PASSENGER"). El staff no
+ *   tiene asiento fijo en el croquis: la agencia bloquea los suyos en cada tour (`staffCapacity`).
  * - `{ type: "DRIVER" }` → operador (chofer). Nunca cuenta como asiento.
  * - `{ type: "WC", rowSpan?, colSpan? }` → baño. No cuenta como asiento.
  */
-export const SEAT_KINDS = ["PASSENGER", "STAFF"] as const;
+export const SEAT_KINDS = ["PASSENGER"] as const;
 export type SeatKind = (typeof SEAT_KINDS)[number];
 
 const seatLabelSchema = z
@@ -85,17 +86,14 @@ export const getLayoutSeatLabels = (layoutMap: LayoutMap): string[] =>
   getLayoutSeats(layoutMap).map((seat) => seat.label);
 
 export interface VehicleCapacity {
-  /** Asientos físicos (pasajeros + staff). Excluye al operador. */
+  /** Asientos físicos. Excluye al operador y al WC. */
   total: number;
-  /** Asientos que se pueden asignar a pasajeros. */
+  /** Asientos que se pueden asignar a pasajeros (todos: el staff se bloquea por tour). */
   passenger: number;
-  /** Asientos reservados para staff por el croquis (p. ej. el copiloto de la Sprinter). */
-  staff: number;
 }
 
 /** Única regla de capacidad de un vehículo (regla 8 de CLAUDE.md). */
 export const getVehicleCapacity = (layoutMap: LayoutMap): VehicleCapacity => {
-  const seats = getLayoutSeats(layoutMap);
-  const staff = seats.filter((seat) => seat.kind === "STAFF").length;
-  return { total: seats.length, passenger: seats.length - staff, staff };
+  const seats = getLayoutSeats(layoutMap).length;
+  return { total: seats, passenger: seats };
 };

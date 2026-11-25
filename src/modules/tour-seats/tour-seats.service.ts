@@ -109,22 +109,13 @@ export class TourSeatsService {
       // permite siempre, para poder limpiar etiquetas de un croquis anterior.
       const layoutSeats = tour.vehicle?.layoutMap ? getLayoutSeats(tour.vehicle.layoutMap) : null;
       const layoutSeat = layoutSeats?.find((seat) => seat.label === seatLabel);
-      if (layoutSeats && payload.status !== "AVAILABLE") {
-        if (!layoutSeat)
-          throw new NotFoundError(`Asiento ${seatLabel} no encontrado en el vehículo`);
-        // El asiento de staff del croquis (p. ej. copiloto de la Sprinter) ya está reservado al
-        // staff: no se vende a pasajeros ni hace falta bloquearlo.
-        if (layoutSeat.kind === "STAFF") {
-          throw new ConflictError(
-            `El asiento ${seatLabel} está reservado para el staff en el croquis del vehículo`,
-          );
-        }
+      if (layoutSeats && payload.status !== "AVAILABLE" && !layoutSeat) {
+        throw new NotFoundError(`Asiento ${seatLabel} no encontrado en el vehículo`);
       }
-      const layoutStaffSeats = layoutSeats?.filter((seat) => seat.kind === "STAFF").length ?? 0;
 
-      // Regla del PM (2026-11-12): asientos de staff del croquis + bloqueos ≤ `staffCapacity`
-      // (los lugares que ya se descuentan de la capacidad vendible). Así un bloqueo nunca quita un
-      // asiento físico que el sistema sigue vendiendo.
+      // Regla del PM (2026-11-12): bloqueos de staff ≤ `staffCapacity` (los lugares que ya se
+      // descuentan de la capacidad vendible). Así un bloqueo nunca quita un asiento físico que el
+      // sistema sigue vendiendo. El croquis no trae asientos de staff fijos.
       if (payload.status === "BLOCKED") {
         const [blocked] = await tx
           .select({ total: count() })
@@ -132,12 +123,12 @@ export class TourSeatsService {
           .where(
             and(eq(tourBlockedSeats.tourId, tourId), ne(tourBlockedSeats.seatLabel, seatLabel)),
           );
-        const staffSeatsInUse = Number(blocked?.total ?? 0) + layoutStaffSeats;
+        const staffSeatsInUse = Number(blocked?.total ?? 0);
         if (staffSeatsInUse >= tour.staffCapacity) {
           throw new ConflictError(
             tour.staffCapacity === 0
               ? "El tour no tiene lugares de staff. Aumenta «Lugares bloqueados para staff» en la configuración del tour."
-              : `Ya están ocupados los ${tour.staffCapacity} lugar(es) de staff del tour (${layoutStaffSeats} del croquis + bloqueos). Libera uno o aumenta los lugares de staff.`,
+              : `Ya están ocupados los ${tour.staffCapacity} lugar(es) de staff del tour. Libera uno o aumenta los lugares de staff.`,
           );
         }
       }

@@ -32,7 +32,7 @@ const SECRET_EMERGENCY = "+522289999999";
 const SECRET_MAGIC_TOKEN = "magic-token-no-publicar";
 
 const SPRINTER_LAYOUT = [
-  [{ type: "DRIVER" }, null, { type: "SEAT", label: "1", kind: "STAFF" }],
+  [{ type: "DRIVER" }, null, { type: "SEAT", label: "1", kind: "PASSENGER" }],
   ["2", "AISLE", "3"],
   ["10", "AISLE", "11"],
 ];
@@ -436,7 +436,7 @@ describe("Enlace de staff: ruta pública", () => {
         vehicle: {
           name: "Sprinter 20",
           layoutMap: SPRINTER_LAYOUT,
-          capacity: { total: 5, passenger: 4, staff: 1 },
+          capacity: { total: 5, passenger: 5 },
         },
         blockedSeats: ["3", "11"],
         boardingPoints: [

@@ -13,6 +13,8 @@ import type { LayoutCell, LayoutMap } from "../../shared/utils/vehicle-layout.ut
  *
  * Convenciones del croquis: fila 0 = frente del vehículo; el operador va en la fila 0, columna 0
  * (lado izquierdo, como en México); "AISLE" = pasillo; null = vacío o celda cubierta por un WC.
+ * Ninguna plantilla trae asientos de staff: el copiloto es un asiento de pasajero y cada agencia
+ * bloquea en el croquis los asientos de su staff (`staffCapacity` del tour).
  */
 export interface VehicleTemplateDefinition {
   code: string;
@@ -27,11 +29,6 @@ const seat = (label: number | string): LayoutCell => ({
   type: "SEAT",
   label: String(label),
   kind: "PASSENGER",
-});
-const staffSeat = (label: number | string): LayoutCell => ({
-  type: "SEAT",
-  label: String(label),
-  kind: "STAFF",
 });
 const DRIVER: LayoutCell = { type: "DRIVER" };
 const AISLE: LayoutCell = "AISLE";
@@ -49,17 +46,48 @@ export const VEHICLE_TEMPLATE_CATALOG: VehicleTemplateDefinition[] = [
     code: "SPRINTER_20",
     name: "Sprinter 20 lugares",
     description:
-      "Van tipo Sprinter: cabina con operador y asiento de staff (copiloto, asiento 1), 19 asientos de pasajero (2–20).",
+      "Van tipo Sprinter: cabina con operador y copiloto (asiento 1), 20 asientos de pasajero (1–20). Si la agencia lleva staff, lo bloquea en el croquis.",
     sortOrder: 10,
     isActive: true,
     layoutMap: [
-      [DRIVER, null, null, staffSeat(1)],
+      [DRIVER, null, null, seat(1)], // copiloto: asiento de pasajero
       [seat(2), seat(3), seat(4), null], // lado derecho libre: puerta corrediza
       [seat(5), seat(6), AISLE, seat(7)],
       [seat(8), seat(9), AISLE, seat(10)],
       [seat(11), seat(12), AISLE, seat(13)],
       [seat(14), seat(15), AISLE, seat(16)],
       [seat(17), seat(18), seat(19), seat(20)],
+    ],
+  },
+  {
+    code: "SPRINTER_14",
+    name: "Sprinter 14 lugares",
+    description:
+      "Van tipo Sprinter: cabina con operador y copiloto (asiento 1), 14 asientos de pasajero (1–14). Si la agencia lleva staff, lo bloquea en el croquis.",
+    sortOrder: 6,
+    isActive: true,
+    layoutMap: [
+      [DRIVER, null, null, seat(1)], // copiloto: asiento de pasajero
+      [seat(2), seat(3), AISLE, seat(4)],
+      [seat(5), seat(6), AISLE, seat(7)],
+      [seat(8), seat(9), AISLE, seat(10)],
+      [seat(11), seat(12), seat(13), seat(14)], // banca trasera completa
+    ],
+  },
+  {
+    code: "SPRINTER_17",
+    name: "Sprinter 17 lugares",
+    description:
+      "Van tipo Sprinter: cabina con operador y copiloto (asiento 1), 17 asientos de pasajero (1–17); acceso por la puerta corrediza del lado derecho. Si la agencia lleva staff, lo bloquea en el croquis.",
+    sortOrder: 8,
+    isActive: true,
+    layoutMap: [
+      [DRIVER, null, null, seat(1)], // copiloto: asiento de pasajero
+      [seat(2), seat(3), seat(4), null], // lado derecho libre: puerta corrediza
+      [seat(5), seat(6), AISLE, seat(7)],
+      [seat(8), seat(9), AISLE, seat(10)],
+      [seat(11), seat(12), AISLE, seat(13)],
+      [seat(14), seat(15), seat(16), seat(17)], // banca trasera completa
     ],
   },
   {
